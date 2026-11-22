@@ -90,6 +90,9 @@ export interface RadiologyOrder {
   clinical_note: string;
   status: string;
   ris_sync_status: string;
+  report_status?: string;
+  radiologist_name?: string;
+  report_text?: string;
   price: number;
 }
 

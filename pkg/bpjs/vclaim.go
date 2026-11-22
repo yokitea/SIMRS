@@ -22,8 +22,9 @@ type AuthHeaders struct {
 }
 
 // BuildHeaders computes BPJS Kesehatan HMAC-SHA256 signature:
-//   data = consID + "&" + unixTimestamp
-//   X-signature = Base64(HMAC-SHA256(secretKey, data))
+//
+//	data = consID + "&" + unixTimestamp
+//	X-signature = Base64(HMAC-SHA256(secretKey, data))
 func BuildHeaders(consID, secretKey, userKey string, now time.Time) AuthHeaders {
 	ts := strconv.FormatInt(now.UTC().Unix(), 10)
 	mac := hmac.New(sha256.New, []byte(secretKey))
@@ -38,8 +39,9 @@ func BuildHeaders(consID, secretKey, userKey string, now time.Time) AuthHeaders 
 }
 
 // DecryptResponse decrypts BPJS VClaim 2.0 AES-256-CBC encrypted response payload:
-//   key = SHA256(consID + secretKey + timestamp)  (32 bytes)
-//   iv  = key[:16]                                (16 bytes)
+//
+//	key = SHA256(consID + secretKey + timestamp)  (32 bytes)
+//	iv  = key[:16]                                (16 bytes)
 func DecryptResponse(consID, secretKey, timestamp, b64Ciphertext string) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(b64Ciphertext)
 	if err != nil {

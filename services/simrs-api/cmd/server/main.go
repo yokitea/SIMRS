@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yokitea/SIMRS/pkg/hl7client"
 	"github.com/yokitea/SIMRS/pkg/simrsstore"
 	"github.com/yokitea/SIMRS/services/simrs-api/internal/httpapi"
 )
@@ -40,6 +42,7 @@ func main() {
 
 	srv := httpapi.NewServer(httpapi.Config{
 		JWTSecret:      jwtSecret,
+		SSOSecret:      envOr("SSO_LAUNCH_SECRET", "shared_ihe_swf_sso_secret_32bytes"),
 		BrandName:      envOr("BRAND_NAME", "Core SIMRS"),
 		HospitalName:   envOr("HOSPITAL_NAME", "RS Digital Indonesia"),
 		SatusehatOrgID: envOr("SATUSEHAT_ORG_ID", "10000000"),
@@ -47,6 +50,40 @@ func main() {
 		RISHL7Addr:     envOr("RIS_HL7_ADDR", "127.0.0.1:2575"),
 		PACSViewerURL:  envOr("NEXT_PUBLIC_PACS_VIEWER_URL", "http://localhost:3001/viewer"),
 	}, repo)
+
+	// Start IHE RAD-28 HL7 v2 MLLP ORU^R01 Receiver (receives finalized radiology reports from Core RIS automatically)
+	hl7Port := envOr("SIMRS_HL7_PORT", "2577")
+	go func() {
+		ln, err := net.Listen("tcp", ":"+hl7Port)
+		if err != nil {
+			log.Printf("[simrs-api] HL7 MLLP ORU receiver disabled on :%s (%v)", hl7Port, err)
+			return
+		}
+		defer ln.Close()
+		log.Printf("[simrs-api] HL7 v2 MLLP ORU^R01 receiver active on TCP :%s (IHE RAD-28)", hl7Port)
+		sem := make(chan struct{}, 64)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			select {
+			case sem <- struct{}{}:
+				go func(c net.Conn) {
+					defer func() { <-sem }()
+					hl7client.HandleMLLPConn(c, func(oru hl7client.InboundORU) error {
+						err := repo.AttachRadiologyReport(ctx, oru.AccessionNumber, "", oru.ReportStatus, oru.RadiologistName, oru.ReportText)
+						if err == nil {
+							_ = repo.AppendAudit(ctx, "RIS_HL7", "HL7_ORU_R01", "RME", oru.AccessionNumber, "Auto-attached expertise report from Core RIS")
+						}
+						return err
+					})
+				}(conn)
+			default:
+				_ = conn.Close()
+			}
+		}
+	}()
 
 	httpSrv := &http.Server{
 		Addr:              ":" + port,

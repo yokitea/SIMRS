@@ -20,6 +20,7 @@ import (
 
 type Config struct {
 	JWTSecret      string
+	SSOSecret      string
 	BrandName      string
 	HospitalName   string
 	SatusehatOrgID string
@@ -46,6 +47,12 @@ type Server struct {
 func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 	if cfg.JWTSecret == "" {
 		cfg.JWTSecret = "changeme_simrs_jwt_secret"
+	}
+	if cfg.SSOSecret == "" {
+		cfg.SSOSecret = "shared_ihe_swf_sso_secret_32bytes"
+	}
+	if cfg.PACSViewerURL == "" {
+		cfg.PACSViewerURL = "http://localhost:3001/viewer"
 	}
 	if cfg.BrandName == "" {
 		cfg.BrandName = "Core SIMRS"
@@ -123,6 +130,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/beds/{id}/release", admisiAuth(s.handleReleaseBed))
 
 	s.mux.HandleFunc("GET /api/v1/radiology-orders", anyAuth(s.handleListRadiologyOrders))
+	s.mux.HandleFunc("GET /api/v1/radiology-orders/{id}/viewer-url", anyAuth(s.handleRadiologyViewerURL))
+	s.mux.HandleFunc("POST /api/v1/radiology-orders/report", dokterAuth(s.handleAttachRadiologyReport))
 	s.mux.HandleFunc("GET /api/v1/medications", anyAuth(s.handleListMedications))
 	s.mux.HandleFunc("GET /api/v1/prescriptions", anyAuth(s.handleListPrescriptions))
 	s.mux.HandleFunc("POST /api/v1/prescriptions/{id}/dispense", farmasiAuth(s.handleDispensePrescription))
@@ -366,6 +375,58 @@ func (s *Server) handleListRadiologyOrders(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"radiology_orders": list})
+}
+
+// handleRadiologyViewerURL mints a 5-minute study-scoped SSO token for zero-login Core PACS Viewer launch.
+func (s *Server) handleRadiologyViewerURL(w http.ResponseWriter, r *http.Request) {
+	ord, ok, err := s.repo.GetRadiologyOrder(r.Context(), r.PathValue("id"))
+	if err != nil || !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "radiology order not found"})
+		return
+	}
+	actor := auth.ActorFromRequest(r)
+	tok, err := auth.SignJWT(s.cfg.SSOSecret, auth.Claims{
+		Sub:        actor,
+		Role:       "VIEWER",
+		Name:       actor,
+		StudyScope: ord.StudyInstanceUID,
+		Exp:        time.Now().Add(5 * time.Minute).Unix(),
+	})
+	if err != nil {
+		writeInternalErr(w, "sign sso viewer token", err)
+		return
+	}
+	base := strings.TrimRight(s.cfg.PACSViewerURL, "/")
+	launchURL := fmt.Sprintf("%s?StudyInstanceUID=%s&accession=%s&token=%s", base, ord.StudyInstanceUID, ord.AccessionNumber, tok)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"viewer_url":         launchURL,
+		"study_instance_uid": ord.StudyInstanceUID,
+		"expires_in_sec":     300,
+	})
+}
+
+// handleAttachRadiologyReport attaches a finalized/amended radiology report from Core RIS into SIMRS RME (IHE RAD-28).
+func (s *Server) handleAttachRadiologyReport(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccessionNumber  string `json:"accession_number"`
+		StudyInstanceUID string `json:"study_instance_uid"`
+		ReportStatus     string `json:"report_status"`
+		RadiologistName  string `json:"radiologist_name"`
+		ReportText       string `json:"report_text"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if req.ReportStatus == "" {
+		req.ReportStatus = "FINAL"
+	}
+	if err := s.repo.AttachRadiologyReport(r.Context(), req.AccessionNumber, req.StudyInstanceUID, req.ReportStatus, req.RadiologistName, req.ReportText); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	_ = s.repo.AppendAudit(r.Context(), auth.ActorFromRequest(r), "RECEIVE_RAD_REPORT", "RME", req.AccessionNumber, "Status="+req.ReportStatus)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "attached", "accession_number": req.AccessionNumber})
 }
 
 func (s *Server) handleCreateRadiologyOrder(w http.ResponseWriter, r *http.Request) {

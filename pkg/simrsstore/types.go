@@ -84,6 +84,9 @@ type RadiologyOrder struct {
 	ClinicalNote     string    `json:"clinical_note"`
 	Status           string    `json:"status"`
 	RISSyncStatus    string    `json:"ris_sync_status"`
+	ReportStatus     string    `json:"report_status,omitempty"`
+	RadiologistName  string    `json:"radiologist_name,omitempty"`
+	ReportText       string    `json:"report_text,omitempty"`
 	Price            int64     `json:"price"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -180,7 +183,9 @@ type Repository interface {
 	CreateSOAPNote(ctx context.Context, n SOAPNote) (SOAPNote, error)
 
 	ListRadiologyOrders(ctx context.Context, visitID string) ([]RadiologyOrder, error)
+	GetRadiologyOrder(ctx context.Context, id string) (RadiologyOrder, bool, error)
 	CreateRadiologyOrder(ctx context.Context, o RadiologyOrder) (RadiologyOrder, error)
+	AttachRadiologyReport(ctx context.Context, accession, studyUID, reportStatus, radiologist, reportText string) error
 
 	ListMedications(ctx context.Context) ([]Medication, error)
 	ListPrescriptions(ctx context.Context, visitID string) ([]Prescription, error)

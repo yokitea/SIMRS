@@ -77,3 +77,109 @@ func SendMLLP(ctx context.Context, addr, message string) (string, error) {
 	ack = strings.TrimRight(ack, "\x1c\r\n")
 	return ack, nil
 }
+
+// InboundORU represents a parsed HL7 v2 ORU^R01 radiology expertise report returned from Core RIS (IHE RAD-28).
+type InboundORU struct {
+	ControlID       string
+	AccessionNumber string
+	PatientID       string
+	ReportStatus    string
+	RadiologistName string
+	ReportText      string
+}
+
+func ParseORU(raw string) InboundORU {
+	raw = strings.ReplaceAll(raw, "\r\n", "\r")
+	raw = strings.ReplaceAll(raw, "\n", "\r")
+	var out InboundORU
+	var lines []string
+	for _, seg := range strings.Split(raw, "\r") {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		f := strings.Split(seg, "|")
+		get := func(i int) string {
+			if i >= 0 && i < len(f) {
+				return strings.TrimSpace(f[i])
+			}
+			return ""
+		}
+		switch f[0] {
+		case "MSH":
+			out.ControlID = get(9)
+		case "PID":
+			pid := get(3)
+			if i := strings.IndexByte(pid, '^'); i >= 0 {
+				pid = pid[:i]
+			}
+			out.PatientID = pid
+		case "OBR":
+			acc := get(3)
+			if i := strings.IndexByte(acc, '^'); i >= 0 {
+				acc = acc[:i]
+			}
+			out.AccessionNumber = acc
+			st := get(25)
+			if strings.EqualFold(st, "C") {
+				out.ReportStatus = "AMENDED"
+			} else {
+				out.ReportStatus = "FINAL"
+			}
+			out.RadiologistName = get(32)
+		case "OBX":
+			txt := get(5)
+			if txt != "" {
+				txt = strings.ReplaceAll(txt, `\X0A\`, "\n")
+				txt = strings.ReplaceAll(txt, `\.br\`, "\n")
+				lines = append(lines, txt)
+			}
+		}
+	}
+	out.ReportText = strings.Join(lines, "\n\n")
+	return out
+}
+
+func BuildACK(controlID, code, text string) string {
+	if controlID == "" {
+		controlID = "UNKNOWN"
+	}
+	return fmt.Sprintf("MSH|^~\\&|CORE_SIMRS|HOSPITAL|CORE_RIS|HOSPITAL|%s||ACK|%s|P|2.5\rMSA|%s|%s|%s\r",
+		time.Now().Format("20060102150405"), controlID, code, controlID, text)
+}
+
+// HandleMLLPConn reads framed HL7 ORU^R01 messages from Core RIS and responds with HL7 ACK.
+func HandleMLLPConn(conn net.Conn, onORU func(InboundORU) error) {
+	defer conn.Close()
+	r := bufio.NewReaderSize(conn, 256*1024)
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		// Seek VT (0x0B)
+		for {
+			b, err := r.ReadByte()
+			if err != nil {
+				return
+			}
+			if b == 0x0B {
+				break
+			}
+		}
+		raw, err := r.ReadString(0x1C)
+		if err != nil {
+			return
+		}
+		_, _ = r.ReadByte() // trailing CR (0x0D)
+		msg := strings.TrimRight(raw, "\x1c")
+		oru := ParseORU(msg)
+		ack := BuildACK(oru.ControlID, "AA", "Radiology report attached to SIMRS RME")
+		if err := onORU(oru); err != nil {
+			ack = BuildACK(oru.ControlID, "AE", err.Error())
+		}
+		frame := append([]byte{0x0B}, []byte(ack)...)
+		frame = append(frame, 0x1C, 0x0D)
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if _, err := conn.Write(frame); err != nil {
+			return
+		}
+	}
+}

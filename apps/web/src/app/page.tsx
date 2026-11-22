@@ -147,7 +147,7 @@ export default function SIMRSConsolePage() {
     fetch(`${SIMRS_API_URL}/api/v1/visits/${activeVisitId}/soap`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((j) => setSoaps(j.soap_notes || []))
-      .catch(() => {});
+      .catch(() => { });
   }, [activeVisitId, token]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -615,19 +615,40 @@ export default function SIMRSConsolePage() {
                   </form>
 
                   {activeVisitRads.map((o) => (
-                    <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: "#0d121c", borderRadius: 8, border: "1px solid var(--border)", marginBottom: 6 }}>
-                      <div>
-                        <strong>[{o.modality}] {o.procedure_name}</strong>
-                        <div className="mono" style={{ color: "var(--muted)" }}>{o.accession_number} · {o.ris_sync_status}</div>
+                    <div key={o.id} style={{ padding: "8px 10px", background: "#0d121c", borderRadius: 8, border: "1px solid var(--border)", marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <div>
+                          <strong>[{o.modality}] {o.procedure_name}</strong>
+                          <div className="mono" style={{ color: "var(--muted)" }}>
+                            {o.accession_number} · {o.ris_sync_status}
+                            {o.report_status ? ` · REPORT ${o.report_status}` : ""}
+                          </div>
+                        </div>
+                        <button
+                          className="btn btn-primary"
+                          onClick={async () => {
+                            const res = await fetch(`${SIMRS_API_URL}/api/v1/radiology-orders/${o.id}/viewer-url`, { headers: authHeaders() });
+                            if (res.ok) {
+                              const j = await res.json();
+                              window.open(j.viewer_url, "_blank", "noopener,noreferrer");
+                            } else {
+                              window.open(`${PACS_VIEWER_URL}?StudyInstanceUID=${encodeURIComponent(o.study_instance_uid)}`, "_blank", "noopener,noreferrer");
+                            }
+                          }}
+                        >
+                          Buka Citra PACS (SSO) ↗
+                        </button>
                       </div>
-                      <a
-                        className="btn btn-primary"
-                        href={`${PACS_VIEWER_URL}?StudyInstanceUID=${encodeURIComponent(o.study_instance_uid)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Buka Citra PACS ↗
-                      </a>
+                      {o.report_text && (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)", fontSize: 12 }}>
+                          <div style={{ color: "#34d399", fontWeight: 600, marginBottom: 4 }}>
+                            Hasil Expertise Radiolog ({o.radiologist_name || "Sp.Rad"}):
+                          </div>
+                          <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontFamily: "inherit", color: "var(--text)" }}>
+                            {o.report_text}
+                          </pre>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </section>

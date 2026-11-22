@@ -393,6 +393,32 @@ func (m *MemoryStore) ListRadiologyOrders(_ context.Context, visitID string) ([]
 	return out, nil
 }
 
+func (m *MemoryStore) GetRadiologyOrder(_ context.Context, id string) (RadiologyOrder, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, o := range m.radOrders {
+		if o.ID == id {
+			return *o, true, nil
+		}
+	}
+	return RadiologyOrder{}, false, nil
+}
+
+func (m *MemoryStore) AttachRadiologyReport(_ context.Context, accession, studyUID, reportStatus, radiologist, reportText string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, o := range m.radOrders {
+		if (accession != "" && o.AccessionNumber == accession) || (studyUID != "" && o.StudyInstanceUID == studyUID) {
+			o.Status = "COMPLETED"
+			o.ReportStatus = reportStatus
+			o.RadiologistName = radiologist
+			o.ReportText = reportText
+			return nil
+		}
+	}
+	return errors.New("radiology order not found for accession/studyUID")
+}
+
 func (m *MemoryStore) CreateRadiologyOrder(_ context.Context, o RadiologyOrder) (RadiologyOrder, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

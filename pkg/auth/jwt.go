@@ -20,10 +20,11 @@ import (
 type ctxKey struct{}
 
 type Claims struct {
-	Sub  string `json:"sub"`
-	Role string `json:"role"`
-	Name string `json:"name"`
-	Exp  int64  `json:"exp"`
+	Sub        string `json:"sub"`
+	Role       string `json:"role"`
+	Name       string `json:"name"`
+	StudyScope string `json:"study_uid,omitempty"`
+	Exp        int64  `json:"exp"`
 }
 
 func HashPassword(pw string) (string, error) {

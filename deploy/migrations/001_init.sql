@@ -95,6 +95,9 @@ CREATE TABLE IF NOT EXISTS radiology_orders (
     clinical_note TEXT NOT NULL DEFAULT '',
     status VARCHAR(24) NOT NULL DEFAULT 'ORDERED', -- ORDERED, SENT_TO_RIS, COMPLETED
     ris_sync_status VARCHAR(32) NOT NULL DEFAULT 'QUEUED',
+    report_status VARCHAR(24) NOT NULL DEFAULT '',
+    radiologist_name VARCHAR(128) NOT NULL DEFAULT '',
+    report_text TEXT NOT NULL DEFAULT '',
     price BIGINT NOT NULL DEFAULT 250000,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

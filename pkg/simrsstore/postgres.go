@@ -279,9 +279,9 @@ func (p *PostgresStore) ListRadiologyOrders(ctx context.Context, visitID string)
 		err  error
 	)
 	if visitID != "" {
-		rows, err = p.pool.Query(ctx, `SELECT id, visit_id, patient_no_rm, patient_name, accession_number, study_instance_uid, modality, procedure_code, procedure_name, clinical_note, status, ris_sync_status, price, created_at FROM radiology_orders WHERE visit_id = $1 ORDER BY created_at DESC`, visitID)
+		rows, err = p.pool.Query(ctx, `SELECT id, visit_id, patient_no_rm, patient_name, accession_number, study_instance_uid, modality, procedure_code, procedure_name, clinical_note, status, ris_sync_status, report_status, radiologist_name, report_text, price, created_at FROM radiology_orders WHERE visit_id = $1 ORDER BY created_at DESC`, visitID)
 	} else {
-		rows, err = p.pool.Query(ctx, `SELECT id, visit_id, patient_no_rm, patient_name, accession_number, study_instance_uid, modality, procedure_code, procedure_name, clinical_note, status, ris_sync_status, price, created_at FROM radiology_orders ORDER BY created_at DESC LIMIT 100`)
+		rows, err = p.pool.Query(ctx, `SELECT id, visit_id, patient_no_rm, patient_name, accession_number, study_instance_uid, modality, procedure_code, procedure_name, clinical_note, status, ris_sync_status, report_status, radiologist_name, report_text, price, created_at FROM radiology_orders ORDER BY created_at DESC LIMIT 100`)
 	}
 	if err != nil {
 		return nil, err
@@ -290,12 +290,38 @@ func (p *PostgresStore) ListRadiologyOrders(ctx context.Context, visitID string)
 	out := make([]RadiologyOrder, 0)
 	for rows.Next() {
 		var o RadiologyOrder
-		if err := rows.Scan(&o.ID, &o.VisitID, &o.PatientNoRM, &o.PatientName, &o.AccessionNumber, &o.StudyInstanceUID, &o.Modality, &o.ProcedureCode, &o.ProcedureName, &o.ClinicalNote, &o.Status, &o.RISSyncStatus, &o.Price, &o.CreatedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.VisitID, &o.PatientNoRM, &o.PatientName, &o.AccessionNumber, &o.StudyInstanceUID, &o.Modality, &o.ProcedureCode, &o.ProcedureName, &o.ClinicalNote, &o.Status, &o.RISSyncStatus, &o.ReportStatus, &o.RadiologistName, &o.ReportText, &o.Price, &o.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+func (p *PostgresStore) GetRadiologyOrder(ctx context.Context, id string) (RadiologyOrder, bool, error) {
+	var o RadiologyOrder
+	err := p.pool.QueryRow(ctx, `SELECT id, visit_id, patient_no_rm, patient_name, accession_number, study_instance_uid, modality, procedure_code, procedure_name, clinical_note, status, ris_sync_status, report_status, radiologist_name, report_text, price, created_at FROM radiology_orders WHERE id = $1`, id).Scan(
+		&o.ID, &o.VisitID, &o.PatientNoRM, &o.PatientName, &o.AccessionNumber, &o.StudyInstanceUID, &o.Modality, &o.ProcedureCode, &o.ProcedureName, &o.ClinicalNote, &o.Status, &o.RISSyncStatus, &o.ReportStatus, &o.RadiologistName, &o.ReportText, &o.Price, &o.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RadiologyOrder{}, false, nil
+	}
+	return o, err == nil, err
+}
+
+func (p *PostgresStore) AttachRadiologyReport(ctx context.Context, accession, studyUID, reportStatus, radiologist, reportText string) error {
+	ct, err := p.pool.Exec(ctx, `
+		UPDATE radiology_orders
+		SET status = 'COMPLETED', report_status = $1, radiologist_name = $2, report_text = $3
+		WHERE (accession_number = $4 AND $4 <> '') OR (study_instance_uid = $5 AND $5 <> '')`,
+		reportStatus, radiologist, reportText, accession, studyUID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return errors.New("radiology order not found")
+	}
+	return nil
 }
 
 func (p *PostgresStore) CreateRadiologyOrder(ctx context.Context, o RadiologyOrder) (RadiologyOrder, error) {
