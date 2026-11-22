@@ -22,17 +22,31 @@ type RadiologyOrderHL7 struct {
 	Modality         string
 }
 
+// sanitizeHL7 strips HL7 v2 segment/field delimiters to prevent HL7 injection.
+func sanitizeHL7(s string) string {
+	r := strings.NewReplacer("\r", " ", "\n", " ", "|", " ", "^", " ", "~", " ", "\\", " ", "&", " ")
+	return strings.TrimSpace(r.Replace(s))
+}
+
 // BuildORM builds an HL7 v2.5 ORM^O01 message compatible with Core RIS pacs-bridge and Core PACS hl7-sync.
 func BuildORM(o RadiologyOrderHL7, now time.Time) string {
 	ts := now.Format("20060102150405")
-	dob := strings.ReplaceAll(o.PatientBirthDate, "-", "")
-	dicomName := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(o.PatientName), " ", "^"))
+	dob := sanitizeHL7(strings.ReplaceAll(o.PatientBirthDate, "-", ""))
+	dicomName := strings.ToUpper(strings.ReplaceAll(sanitizeHL7(o.PatientName), " ", "^"))
+	ctrl := sanitizeHL7(o.ControlID)
+	pid := sanitizeHL7(o.PatientID)
+	sex := sanitizeHL7(o.PatientSex)
+	acc := sanitizeHL7(o.AccessionNumber)
+	uid := sanitizeHL7(o.StudyInstanceUID)
+	pcode := sanitizeHL7(o.ProcedureCode)
+	pname := sanitizeHL7(o.ProcedureName)
+	mod := sanitizeHL7(o.Modality)
 	return strings.Join([]string{
-		fmt.Sprintf("MSH|^~\\&|CORE_SIMRS|HOSPITAL|CORE_RIS|HOSPITAL|%s||ORM^O01|%s|P|2.5", ts, o.ControlID),
-		fmt.Sprintf("PID|1||%s^^^RS||%s||%s|%s", o.PatientID, dicomName, dob, o.PatientSex),
-		fmt.Sprintf("ORC|NW|%s|%s", o.ControlID, o.AccessionNumber),
-		fmt.Sprintf("OBR|1|%s|%s|%s^%s||||||||||||||||||||%s", o.ControlID, o.AccessionNumber, o.ProcedureCode, o.ProcedureName, o.Modality),
-		fmt.Sprintf("ZDS|%s^^Application^DICOM", o.StudyInstanceUID),
+		fmt.Sprintf("MSH|^~\\&|CORE_SIMRS|HOSPITAL|CORE_RIS|HOSPITAL|%s||ORM^O01|%s|P|2.5", ts, ctrl),
+		fmt.Sprintf("PID|1||%s^^^RS||%s||%s|%s", pid, dicomName, dob, sex),
+		fmt.Sprintf("ORC|NW|%s|%s", ctrl, acc),
+		fmt.Sprintf("OBR|1|%s|%s|%s^%s||||||||||||||||||||%s", ctrl, acc, pcode, pname, mod),
+		fmt.Sprintf("ZDS|%s^^Application^DICOM", uid),
 	}, "\r") + "\r"
 }
 

@@ -55,9 +55,16 @@ func DecryptResponse(consID, secretKey, timestamp, b64Ciphertext string) ([]byte
 	}
 	plain := make([]byte, len(raw))
 	cipher.NewCBCDecrypter(block, key[:16]).CryptBlocks(plain, raw)
-	// Strip PKCS#7 padding
+	// Constant-time full PKCS#7 padding validation
 	pad := int(plain[len(plain)-1])
 	if pad == 0 || pad > aes.BlockSize || pad > len(plain) {
+		return nil, errors.New("bpjs: invalid PKCS7 padding")
+	}
+	var diff byte
+	for i := len(plain) - pad; i < len(plain); i++ {
+		diff |= plain[i] ^ byte(pad)
+	}
+	if diff != 0 {
 		return nil, errors.New("bpjs: invalid PKCS7 padding")
 	}
 	return plain[:len(plain)-pad], nil
@@ -68,6 +75,9 @@ func GenerateSEPNumber(ppkCode string, now time.Time, seq int64) string {
 	ppk := strings.TrimSpace(ppkCode)
 	if len(ppk) != 8 {
 		ppk = "0112R001"
+	}
+	if seq < 0 {
+		seq = -seq
 	}
 	return fmt.Sprintf("%s%02d%02dV%06d", ppk, now.Month(), now.Year()%100, seq%1000000)
 }

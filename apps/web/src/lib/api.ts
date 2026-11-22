@@ -162,6 +162,19 @@ export interface DashboardData {
   };
 }
 
+export function getToken(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("simrs_jwt") || "";
+}
+
+export function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const tok = getToken();
+  return {
+    ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
+    ...(extra || {}),
+  };
+}
+
 export function formatIDR(n: number): string {
   return "Rp " + (n || 0).toLocaleString("id-ID");
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PostgresStore implements Repository on PostgreSQL 16 (pgx/v5).
+// PostgresStore implements Repository on PostgreSQL 16 (pgx/v5) with full transactional integrity.
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
@@ -58,11 +58,16 @@ func (p *PostgresStore) GetPatient(ctx context.Context, id string) (Patient, boo
 }
 
 func (p *PostgresStore) CreatePatient(ctx context.Context, pt Patient) (Patient, error) {
-	if pt.ID == "" {
-		pt.ID = uuid.NewString()
+	pt.ID = uuid.NewString()
+	var seq int64
+	if err := p.pool.QueryRow(ctx, `SELECT nextval('no_rm_seq')`).Scan(&seq); err != nil {
+		return pt, err
 	}
 	if pt.NoRM == "" {
-		pt.NoRM = fmt.Sprintf("RM-%06d", time.Now().Unix()%1000000)
+		pt.NoRM = fmt.Sprintf("RM-%06d", seq)
+	}
+	if pt.IHSNumber == "" {
+		pt.IHSNumber = fmt.Sprintf("P1000%04d", seq)
 	}
 	err := p.pool.QueryRow(ctx, `
 		INSERT INTO patients (id, no_rm, nik, bpjs_number, ihs_number, full_name, birth_date, sex, phone, address)
@@ -108,21 +113,65 @@ func (p *PostgresStore) GetVisit(ctx context.Context, id string) (Visit, bool, e
 }
 
 func (p *PostgresStore) CreateVisit(ctx context.Context, v Visit) (Visit, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback(ctx)
+
 	now := time.Now().UTC()
-	if v.ID == "" {
-		v.ID = uuid.NewString()
+	v.ID = uuid.NewString()
+	var seq int64
+	if err := tx.QueryRow(ctx, `SELECT nextval('visit_seq')`).Scan(&seq); err != nil {
+		return v, err
 	}
-	if v.VisitNumber == "" {
-		v.VisitNumber = fmt.Sprintf("VIS-%s-%04d", now.Format("20060102"), now.Unix()%10000)
+	v.VisitNumber = fmt.Sprintf("VIS-%s-%04d", now.Format("20060102"), seq)
+	prefix := "A"
+	if v.ServiceType == "IGD" {
+		prefix = "IGD"
+	} else if v.ServiceType == "RI" {
+		prefix = "RI"
 	}
-	if v.Status == "" {
+	v.QueueNumber = fmt.Sprintf("%s-%03d", prefix, seq)
+	if v.ServiceType == "RI" {
+		v.Status = "RAWAT_INAP"
+	} else {
 		v.Status = "ANTRI"
 	}
-	err := p.pool.QueryRow(ctx, `
+	v.SatusehatEncounterID = "enc-" + v.ID[:8]
+
+	err = tx.QueryRow(ctx, `
 		INSERT INTO visits (id, visit_number, queue_number, patient_id, patient_no_rm, patient_name, service_type, unit_name, doctor_name, triage_level, bed_id, payment_type, status, satusehat_encounter_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING created_at, updated_at`,
 		v.ID, v.VisitNumber, v.QueueNumber, v.PatientID, v.PatientNoRM, v.PatientName, v.ServiceType, v.UnitName, v.DoctorName, v.TriageLevel, v.BedID, v.PaymentType, v.Status, v.SatusehatEncounterID).Scan(&v.CreatedAt, &v.UpdatedAt)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+
+	price := int64(150000)
+	desc := "Jasa Konsultasi " + v.UnitName
+	cat := "KONSULTASI"
+	if v.ServiceType == "RI" && v.BedID != "" {
+		var roomCode, careClass string
+		var dailyRate int64
+		err := tx.QueryRow(ctx, `
+			UPDATE beds SET status = 'TERISI', current_visit_id = $1, current_patient_name = $2
+			WHERE id = $3 AND status = 'TERSEDIA'
+			RETURNING room_code, care_class, daily_rate`, v.ID, v.PatientName, v.BedID).Scan(&roomCode, &careClass, &dailyRate)
+		if err != nil {
+			return v, errors.New("bed tidak tersedia")
+		}
+		price = dailyRate
+		desc = fmt.Sprintf("Kamar Rawat Inap %s (%s) - Hari 1", roomCode, careClass)
+		cat = "KAMAR"
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO billing_items (id, visit_id, category, description, qty, unit_price, subtotal, paid)
+		VALUES ($1,$2,$3,$4,1,$5,$5,FALSE)`, uuid.NewString(), v.ID, cat, desc, price); err != nil {
+		return v, err
+	}
+	return v, tx.Commit(ctx)
 }
 
 func (p *PostgresStore) UpdateVisitStatus(ctx context.Context, id, status string) error {
@@ -153,13 +202,40 @@ func (p *PostgresStore) ListBeds(ctx context.Context) ([]Bed, error) {
 }
 
 func (p *PostgresStore) AssignBed(ctx context.Context, bedID, visitID, patientName string) error {
-	_, err := p.pool.Exec(ctx, `UPDATE beds SET status = 'TERISI', current_visit_id = $1, current_patient_name = $2 WHERE id = $3`, visitID, patientName, bedID)
-	return err
+	ct, err := p.pool.Exec(ctx, `UPDATE beds SET status = 'TERISI', current_visit_id = $1, current_patient_name = $2 WHERE id = $3 AND status = 'TERSEDIA'`, visitID, patientName, bedID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return errors.New("bed not available")
+	}
+	return nil
 }
 
 func (p *PostgresStore) ReleaseBed(ctx context.Context, bedID string) error {
-	_, err := p.pool.Exec(ctx, `UPDATE beds SET status = 'TERSEDIA', current_visit_id = NULL, current_patient_name = '' WHERE id = $1`, bedID)
-	return err
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var visitID string
+	err = tx.QueryRow(ctx, `SELECT COALESCE(current_visit_id::text,'') FROM beds WHERE id = $1`, bedID).Scan(&visitID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errors.New("bed not found")
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE beds SET status = 'TERSEDIA', current_visit_id = NULL, current_patient_name = '' WHERE id = $1`, bedID); err != nil {
+		return err
+	}
+	if visitID != "" {
+		if _, err := tx.Exec(ctx, `UPDATE visits SET status = 'SELESAI', updated_at = NOW() WHERE id = $1`, visitID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (p *PostgresStore) ListSOAPNotes(ctx context.Context, visitID string) ([]SOAPNote, error) {
@@ -180,14 +256,21 @@ func (p *PostgresStore) ListSOAPNotes(ctx context.Context, visitID string) ([]SO
 }
 
 func (p *PostgresStore) CreateSOAPNote(ctx context.Context, n SOAPNote) (SOAPNote, error) {
-	if n.ID == "" {
-		n.ID = uuid.NewString()
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return n, err
 	}
-	err := p.pool.QueryRow(ctx, `
+	defer tx.Rollback(ctx)
+	n.ID = uuid.NewString()
+	err = tx.QueryRow(ctx, `
 		INSERT INTO soap_notes (id, visit_id, author_name, subjective, objective, bp_systolic, bp_diastolic, heart_rate, temperature, resp_rate, spo2, icd10_code, icd10_name, assessment, plan)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING created_at`,
 		n.ID, n.VisitID, n.AuthorName, n.Subjective, n.Objective, n.BPSystolic, n.BPDiastolic, n.HeartRate, n.Temperature, n.RespRate, n.SpO2, n.ICD10Code, n.ICD10Name, n.Assessment, n.Plan).Scan(&n.CreatedAt)
-	return n, err
+	if err != nil {
+		return n, err
+	}
+	_, _ = tx.Exec(ctx, `UPDATE visits SET status = 'DIPERIKSA', updated_at = NOW() WHERE id = $1 AND status = 'ANTRI'`, n.VisitID)
+	return n, tx.Commit(ctx)
 }
 
 func (p *PostgresStore) ListRadiologyOrders(ctx context.Context, visitID string) ([]RadiologyOrder, error) {
@@ -216,14 +299,36 @@ func (p *PostgresStore) ListRadiologyOrders(ctx context.Context, visitID string)
 }
 
 func (p *PostgresStore) CreateRadiologyOrder(ctx context.Context, o RadiologyOrder) (RadiologyOrder, error) {
-	if o.ID == "" {
-		o.ID = uuid.NewString()
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return o, err
 	}
-	err := p.pool.QueryRow(ctx, `
+	defer tx.Rollback(ctx)
+	now := time.Now().UTC()
+	o.ID = uuid.NewString()
+	var seq int64
+	if err := tx.QueryRow(ctx, `SELECT nextval('rad_seq')`).Scan(&seq); err != nil {
+		return o, err
+	}
+	o.AccessionNumber = fmt.Sprintf("ACC-%s-%04d", now.Format("20060102"), seq)
+	o.StudyInstanceUID = fmt.Sprintf("1.2.826.0.1.3680043.10.%s.%d", now.Format("20060102"), 5000+seq)
+	if o.Price <= 0 {
+		o.Price = 350000
+	}
+	err = tx.QueryRow(ctx, `
 		INSERT INTO radiology_orders (id, visit_id, patient_no_rm, patient_name, accession_number, study_instance_uid, modality, procedure_code, procedure_name, clinical_note, status, ris_sync_status, price)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING created_at`,
 		o.ID, o.VisitID, o.PatientNoRM, o.PatientName, o.AccessionNumber, o.StudyInstanceUID, o.Modality, o.ProcedureCode, o.ProcedureName, o.ClinicalNote, o.Status, o.RISSyncStatus, o.Price).Scan(&o.CreatedAt)
-	return o, err
+	if err != nil {
+		return o, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO billing_items (id, visit_id, category, description, qty, unit_price, subtotal, paid)
+		VALUES ($1,$2,'RADIOLOGI',$3,1,$4,$4,FALSE)`,
+		uuid.NewString(), o.VisitID, fmt.Sprintf("%s (%s)", o.ProcedureName, o.Modality), o.Price); err != nil {
+		return o, err
+	}
+	return o, tx.Commit(ctx)
 }
 
 func (p *PostgresStore) ListMedications(ctx context.Context) ([]Medication, error) {
@@ -269,13 +374,31 @@ func (p *PostgresStore) ListPrescriptions(ctx context.Context, visitID string) (
 }
 
 func (p *PostgresStore) CreatePrescription(ctx context.Context, rx Prescription) (Prescription, error) {
-	if rx.ID == "" {
-		rx.ID = uuid.NewString()
+	if rx.Qty <= 0 {
+		return Prescription{}, errors.New("qty must be > 0")
 	}
-	if rx.RxNumber == "" {
-		rx.RxNumber = fmt.Sprintf("RX-%s-%04d", time.Now().Format("20060102"), time.Now().Unix()%10000)
+	var medName, kfa string
+	var unitPrice int64
+	err := p.pool.QueryRow(ctx, `SELECT name, kfa_code, unit_price FROM medications WHERE id = $1`, rx.MedicationID).Scan(&medName, &kfa, &unitPrice)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Prescription{}, errors.New("medication not found")
 	}
-	err := p.pool.QueryRow(ctx, `
+	if err != nil {
+		return Prescription{}, err
+	}
+
+	var seq int64
+	if err := p.pool.QueryRow(ctx, `SELECT nextval('rx_seq')`).Scan(&seq); err != nil {
+		return Prescription{}, err
+	}
+	rx.ID = uuid.NewString()
+	rx.RxNumber = fmt.Sprintf("RX-%s-%04d", time.Now().Format("20060102"), seq)
+	rx.MedicationName = medName
+	rx.KFACode = kfa
+	rx.TotalPrice = int64(rx.Qty) * unitPrice
+	rx.Status = "MENUNGGU"
+
+	err = p.pool.QueryRow(ctx, `
 		INSERT INTO prescriptions (id, rx_number, visit_id, patient_no_rm, patient_name, doctor_name, medication_id, medication_name, kfa_code, qty, dosage, total_price, status)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'MENUNGGU') RETURNING created_at`,
 		rx.ID, rx.RxNumber, rx.VisitID, rx.PatientNoRM, rx.PatientName, rx.DoctorName, rx.MedicationID, rx.MedicationName, rx.KFACode, rx.Qty, rx.Dosage, rx.TotalPrice).Scan(&rx.CreatedAt)
@@ -289,14 +412,34 @@ func (p *PostgresStore) DispensePrescription(ctx context.Context, rxID string) (
 		return rx, err
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `UPDATE prescriptions SET status = 'DISERAHKAN' WHERE id = $1 RETURNING id, rx_number, visit_id, patient_no_rm, patient_name, doctor_name, medication_id, medication_name, kfa_code, qty, dosage, total_price, status, created_at`, rxID).Scan(
+
+	// Guard against double-dispense with WHERE status = 'MENUNGGU'
+	err = tx.QueryRow(ctx, `
+		UPDATE prescriptions SET status = 'DISERAHKAN'
+		WHERE id = $1 AND status = 'MENUNGGU'
+		RETURNING id, rx_number, visit_id, patient_no_rm, patient_name, doctor_name, medication_id, medication_name, kfa_code, qty, dosage, total_price, status, created_at`, rxID).Scan(
 		&rx.ID, &rx.RxNumber, &rx.VisitID, &rx.PatientNoRM, &rx.PatientName, &rx.DoctorName, &rx.MedicationID, &rx.MedicationName, &rx.KFACode, &rx.Qty, &rx.Dosage, &rx.TotalPrice, &rx.Status, &rx.CreatedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return rx, errors.New("resep tidak ditemukan atau sudah diserahkan")
+	}
 	if err != nil {
 		return rx, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE medications SET stock = GREATEST(stock - $1, 0) WHERE id = $2`, rx.Qty, rx.MedicationID)
+
+	ct, err := tx.Exec(ctx, `UPDATE medications SET stock = stock - $1 WHERE id = $2 AND stock >= $1`, rx.Qty, rx.MedicationID)
 	if err != nil {
+		return rx, err
+	}
+	if ct.RowsAffected() == 0 {
+		return rx, errors.New("stok obat tidak mencukupi")
+	}
+
+	unitPrice := rx.TotalPrice / int64(max(rx.Qty, 1))
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO billing_items (id, visit_id, category, description, qty, unit_price, subtotal, paid)
+		VALUES ($1,$2,'FARMASI',$3,$4,$5,$6,FALSE)`,
+		uuid.NewString(), rx.VisitID, fmt.Sprintf("%s (%s)", rx.MedicationName, rx.RxNumber), rx.Qty, unitPrice, rx.TotalPrice); err != nil {
 		return rx, err
 	}
 	return rx, tx.Commit(ctx)
@@ -320,24 +463,37 @@ func (p *PostgresStore) ListBillingItems(ctx context.Context, visitID string) ([
 }
 
 func (p *PostgresStore) AddBillingItem(ctx context.Context, item BillingItem) (BillingItem, error) {
-	if item.ID == "" {
-		item.ID = uuid.NewString()
+	item.ID = uuid.NewString()
+	if item.Qty <= 0 {
+		item.Qty = 1
 	}
+	item.Subtotal = int64(item.Qty) * item.UnitPrice
 	err := p.pool.QueryRow(ctx, `INSERT INTO billing_items (id, visit_id, category, description, qty, unit_price, subtotal, paid) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at`,
 		item.ID, item.VisitID, item.Category, item.Description, item.Qty, item.UnitPrice, item.Subtotal, item.Paid).Scan(&item.CreatedAt)
 	return item, err
 }
 
 func (p *PostgresStore) SettleVisitBilling(ctx context.Context, visitID string) (int64, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
 	var total int64
-	_ = p.pool.QueryRow(ctx, `SELECT COALESCE(SUM(subtotal),0) FROM billing_items WHERE visit_id = $1`, visitID).Scan(&total)
-	_, err := p.pool.Exec(ctx, `UPDATE billing_items SET paid = TRUE WHERE visit_id = $1`, visitID)
-	return total, err
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(subtotal),0) FROM billing_items WHERE visit_id = $1`, visitID).Scan(&total); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE billing_items SET paid = TRUE WHERE visit_id = $1`, visitID); err != nil {
+		return 0, err
+	}
+	_, _ = tx.Exec(ctx, `UPDATE visits SET status = 'SELESAI', updated_at = NOW() WHERE id = $1 AND service_type <> 'RI'`, visitID)
+	return total, tx.Commit(ctx)
 }
 
 func (p *PostgresStore) EnqueueOutbox(ctx context.Context, item OutboxItem) (OutboxItem, error) {
-	if item.ID == "" {
-		item.ID = uuid.NewString()
+	item.ID = uuid.NewString()
+	if item.Status == "" {
+		item.Status = "QUEUED"
 	}
 	err := p.pool.QueryRow(ctx, `INSERT INTO integration_outbox (id, target, event_type, reference_id, payload, status, last_error) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING created_at`,
 		item.ID, item.Target, item.EventType, item.ReferenceID, item.Payload, item.Status, item.LastError).Scan(&item.CreatedAt)
@@ -345,7 +501,10 @@ func (p *PostgresStore) EnqueueOutbox(ctx context.Context, item OutboxItem) (Out
 }
 
 func (p *PostgresStore) ListOutbox(ctx context.Context, limit int) ([]OutboxItem, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id, target, event_type, reference_id, payload::text, status, last_error, created_at FROM integration_outbox ORDER BY created_at DESC LIMIT $1`, max(limit, 50))
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	rows, err := p.pool.Query(ctx, `SELECT id, target, event_type, reference_id, payload::text, status, last_error, created_at FROM integration_outbox ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +526,10 @@ func (p *PostgresStore) AppendAudit(ctx context.Context, actor, action, resType,
 }
 
 func (p *PostgresStore) ListAudits(ctx context.Context, limit int) ([]AuditLog, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id, actor, action, resource_type, resource_id, detail, created_at FROM audit_logs ORDER BY id DESC LIMIT $1`, max(limit, 50))
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	rows, err := p.pool.Query(ctx, `SELECT id, actor, action, resource_type, resource_id, detail, created_at FROM audit_logs ORDER BY id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +547,9 @@ func (p *PostgresStore) ListAudits(ctx context.Context, limit int) ([]AuditLog, 
 
 func (p *PostgresStore) Stats(ctx context.Context) (DashboardStats, error) {
 	var st DashboardStats
-	_ = p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM patients`).Scan(&st.TotalPatients)
+	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM patients`).Scan(&st.TotalPatients); err != nil {
+		return st, err
+	}
 	_ = p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM visits WHERE service_type='RJ' AND status<>'SELESAI'`).Scan(&st.ActiveVisitsRJ)
 	_ = p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM visits WHERE service_type='IGD' AND status<>'SELESAI'`).Scan(&st.ActiveVisitsIGD)
 	_ = p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM visits WHERE service_type='RI' AND status<>'SELESAI'`).Scan(&st.ActiveVisitsRI)

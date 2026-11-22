@@ -33,8 +33,13 @@ func main() {
 		repo = simrsstore.NewMemoryStore()
 	}
 
+	jwtSecret := envOr("JWT_SECRET", "changeme_simrs_jwt_secret")
+	if os.Getenv("DATABASE_URL") != "" && (jwtSecret == "changeme_simrs_jwt_secret" || len(jwtSecret) < 32) {
+		log.Fatalf("[simrs-api] SECURITY: JWT_SECRET must be set to a non-default string >= 32 chars when DATABASE_URL is configured")
+	}
+
 	srv := httpapi.NewServer(httpapi.Config{
-		JWTSecret:      envOr("JWT_SECRET", "changeme_simrs_jwt_secret"),
+		JWTSecret:      jwtSecret,
 		BrandName:      envOr("BRAND_NAME", "Core SIMRS"),
 		HospitalName:   envOr("HOSPITAL_NAME", "RS Digital Indonesia"),
 		SatusehatOrgID: envOr("SATUSEHAT_ORG_ID", "10000000"),
@@ -47,6 +52,10 @@ func main() {
 		Addr:              ":" + port,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {

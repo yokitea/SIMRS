@@ -2,11 +2,13 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
+  authHeaders,
   Bed,
   BillingItem,
   BRAND_CONFIG,
   DashboardData,
   formatIDR,
+  getToken,
   Medication,
   OutboxItem,
   PACS_VIEWER_URL,
@@ -22,6 +24,11 @@ import {
 type Tab = "admisi" | "rme" | "ranap" | "farmasi" | "kasir" | "outbox";
 
 export default function SIMRSConsolePage() {
+  const [token, setToken] = useState("");
+  const [userLabel, setUserLabel] = useState("");
+  const [loginUser, setLoginUser] = useState("admin");
+  const [loginPass, setLoginPass] = useState("admin123");
+  const [loginErr, setLoginErr] = useState("");
   const [tab, setTab] = useState<Tab>("admisi");
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -82,18 +89,26 @@ export default function SIMRSConsolePage() {
   };
 
   const loadAll = useCallback(async () => {
+    const tok = getToken();
+    if (!tok) return;
+    const h = { headers: authHeaders() };
     try {
       const [dRes, pRes, vRes, bRes, mRes, rxRes, rRes, bilRes, oRes] = await Promise.all([
-        fetch(`${SIMRS_API_URL}/api/v1/dashboard`),
-        fetch(`${SIMRS_API_URL}/api/v1/patients`),
-        fetch(`${SIMRS_API_URL}/api/v1/visits`),
-        fetch(`${SIMRS_API_URL}/api/v1/beds`),
-        fetch(`${SIMRS_API_URL}/api/v1/medications`),
-        fetch(`${SIMRS_API_URL}/api/v1/prescriptions`),
-        fetch(`${SIMRS_API_URL}/api/v1/radiology-orders`),
-        fetch(`${SIMRS_API_URL}/api/v1/billing`),
-        fetch(`${SIMRS_API_URL}/api/v1/outbox`),
+        fetch(`${SIMRS_API_URL}/api/v1/dashboard`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/patients`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/visits`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/beds`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/medications`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/prescriptions`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/radiology-orders`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/billing`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/outbox`, h),
       ]);
+      if (dRes.status === 401) {
+        localStorage.removeItem("simrs_jwt");
+        setToken("");
+        return;
+      }
       if (dRes.ok) setDashboard(await dRes.json());
       if (pRes.ok) {
         const j = await pRes.json();
@@ -119,16 +134,48 @@ export default function SIMRSConsolePage() {
   }, []);
 
   useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+    const saved = getToken();
+    if (saved) setToken(saved);
+  }, []);
 
   useEffect(() => {
-    if (!activeVisitId) return;
-    fetch(`${SIMRS_API_URL}/api/v1/visits/${activeVisitId}/soap`)
+    if (token) loadAll();
+  }, [token, loadAll]);
+
+  useEffect(() => {
+    if (!activeVisitId || !token) return;
+    fetch(`${SIMRS_API_URL}/api/v1/visits/${activeVisitId}/soap`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((j) => setSoaps(j.soap_notes || []))
       .catch(() => {});
-  }, [activeVisitId]);
+  }, [activeVisitId, token]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginErr("");
+    try {
+      const res = await fetch(`${SIMRS_API_URL}/api/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUser, password: loginPass }),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setLoginErr(j.error || "Login gagal");
+        return;
+      }
+      localStorage.setItem("simrs_jwt", j.token);
+      setToken(j.token);
+      setUserLabel(`${j.user?.full_name || loginUser} (${j.user?.role || ""})`);
+    } catch {
+      setLoginErr("Tidak dapat terhubung ke SIMRS API");
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("simrs_jwt");
+    setToken("");
+  };
 
   const activeVisit = visits.find((v) => v.id === activeVisitId) || null;
   const activeVisitRads = radOrders.filter((r) => r.visit_id === activeVisitId);
@@ -139,7 +186,7 @@ export default function SIMRSConsolePage() {
     if (!newPat.full_name.trim()) return;
     const res = await fetch(`${SIMRS_API_URL}/api/v1/patients`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(newPat),
     });
     if (res.ok) {
@@ -156,7 +203,7 @@ export default function SIMRSConsolePage() {
     if (!newVisit.patient_id) return;
     const res = await fetch(`${SIMRS_API_URL}/api/v1/visits`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(newVisit),
     });
     if (res.ok) {
@@ -172,13 +219,13 @@ export default function SIMRSConsolePage() {
     if (!activeVisitId) return;
     const res = await fetch(`${SIMRS_API_URL}/api/v1/visits/${activeVisitId}/soap`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(soapForm),
     });
     if (res.ok) {
       notify("CPPT/SOAP tersimpan & FHIR Condition diantrekan ke SATUSEHAT");
       setSoapForm((prev) => ({ ...prev, subjective: "", objective: "", assessment: "", plan: "" }));
-      const sRes = await fetch(`${SIMRS_API_URL}/api/v1/visits/${activeVisitId}/soap`);
+      const sRes = await fetch(`${SIMRS_API_URL}/api/v1/visits/${activeVisitId}/soap`, { headers: authHeaders() });
       if (sRes.ok) setSoaps((await sRes.json()).soap_notes || []);
       await loadAll();
     }
@@ -189,7 +236,7 @@ export default function SIMRSConsolePage() {
     if (!activeVisitId) return;
     const res = await fetch(`${SIMRS_API_URL}/api/v1/visits/${activeVisitId}/radiology-orders`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(radForm),
     });
     if (res.ok) {
@@ -204,7 +251,7 @@ export default function SIMRSConsolePage() {
     if (!activeVisitId) return;
     const res = await fetch(`${SIMRS_API_URL}/api/v1/visits/${activeVisitId}/prescriptions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(rxForm),
     });
     if (res.ok) {
@@ -214,7 +261,7 @@ export default function SIMRSConsolePage() {
   };
 
   const handleDispense = async (rxId: string) => {
-    const res = await fetch(`${SIMRS_API_URL}/api/v1/prescriptions/${rxId}/dispense`, { method: "POST" });
+    const res = await fetch(`${SIMRS_API_URL}/api/v1/prescriptions/${rxId}/dispense`, { method: "POST", headers: authHeaders() });
     if (res.ok) {
       notify("Obat diserahkan, stok dipotong & tagihan ditambahkan ke Kasir");
       await loadAll();
@@ -222,7 +269,7 @@ export default function SIMRSConsolePage() {
   };
 
   const handleReleaseBed = async (bedId: string) => {
-    const res = await fetch(`${SIMRS_API_URL}/api/v1/beds/${bedId}/release`, { method: "POST" });
+    const res = await fetch(`${SIMRS_API_URL}/api/v1/beds/${bedId}/release`, { method: "POST", headers: authHeaders() });
     if (res.ok) {
       notify(`Bed ${bedId} dikosongkan (pasien pulang)`);
       await loadAll();
@@ -230,13 +277,38 @@ export default function SIMRSConsolePage() {
   };
 
   const handleSettle = async (visitId: string) => {
-    const res = await fetch(`${SIMRS_API_URL}/api/v1/visits/${visitId}/settle`, { method: "POST" });
+    const res = await fetch(`${SIMRS_API_URL}/api/v1/visits/${visitId}/settle`, { method: "POST", headers: authHeaders() });
     if (res.ok) {
       const j = await res.json();
       notify(`Tagihan lunas: ${formatIDR(j.total_paid)}`);
       await loadAll();
     }
   };
+
+  if (!token) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 }}>
+        <form onSubmit={handleLogin} className="card" style={{ width: "100%", maxWidth: 380, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="brand" style={{ justifyContent: "center", marginBottom: 4 }}>
+            <div className="brand-mark">RS</div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{BRAND_CONFIG.name}</div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>JWT + RBAC Protected Console</div>
+            </div>
+          </div>
+          {loginErr && <div style={{ color: "#fca5a5", fontSize: 12, textAlign: "center" }}>{loginErr}</div>}
+          <input className="input" placeholder="Username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} />
+          <input className="input" type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} />
+          <button className="btn btn-primary" type="submit" style={{ justifyContent: "center" }}>
+            Masuk ke {BRAND_CONFIG.name}
+          </button>
+          <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "center" }}>
+            Demo: <span className="mono">admin/admin123</span> · <span className="mono">dokter/dokter123</span> · <span className="mono">farmasi/farmasi123</span> · <span className="mono">kasir/kasir123</span>
+          </div>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -280,6 +352,9 @@ export default function SIMRSConsolePage() {
           <a className="btn btn-cyan" style={{ padding: "6px 10px", fontSize: 12 }} href={RIS_URL} target="_blank" rel="noreferrer">
             Buka RIS ↗
           </a>
+          <button className="tab-btn" onClick={handleLogout} title={userLabel}>
+            Keluar
+          </button>
         </nav>
       </header>
 

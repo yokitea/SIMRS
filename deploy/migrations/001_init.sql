@@ -1,6 +1,21 @@
 -- Core SIMRS PostgreSQL 16 Schema (White-Label OEM, Zero GPL/AGPL)
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+CREATE SEQUENCE IF NOT EXISTS no_rm_seq START 2000;
+CREATE SEQUENCE IF NOT EXISTS visit_seq START 100;
+CREATE SEQUENCE IF NOT EXISTS rx_seq START 100;
+CREATE SEQUENCE IF NOT EXISTS rad_seq START 100;
+
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username VARCHAR(64) UNIQUE NOT NULL,
+    full_name VARCHAR(128) NOT NULL,
+    role VARCHAR(32) NOT NULL CHECK (role IN ('ADMIN', 'DOKTER', 'PERAWAT', 'FARMASI', 'KASIR', 'ADMISI')),
+    password_hash TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS patients (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     no_rm VARCHAR(32) UNIQUE NOT NULL,
@@ -142,3 +157,26 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     detail TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Seed master beds & KFA medications so PostgreSQL mode works immediately out-of-the-box
+INSERT INTO beds (id, ward_name, room_code, care_class, daily_rate, status) VALUES
+    ('BED-VIP-01', 'Paviliun Anggrek', 'VIP-101', 'VIP', 1250000, 'TERSEDIA'),
+    ('BED-K1-01', 'Paviliun Anggrek', 'K1-201', 'KELAS_1', 650000, 'TERSEDIA'),
+    ('BED-K1-02', 'Paviliun Anggrek', 'K1-202', 'KELAS_1', 650000, 'TERSEDIA'),
+    ('BED-K2-01', 'Ruang Melati', 'K2-301', 'KELAS_2', 400000, 'TERSEDIA'),
+    ('BED-K2-02', 'Ruang Melati', 'K2-302', 'KELAS_2', 400000, 'TERSEDIA'),
+    ('BED-K3-01', 'Ruang Kenanga', 'K3-401', 'KELAS_3', 225000, 'TERSEDIA'),
+    ('BED-K3-02', 'Ruang Kenanga', 'K3-402', 'KELAS_3', 225000, 'TERSEDIA'),
+    ('BED-ICU-01', 'ICU Sentral', 'ICU-01', 'ICU', 1850000, 'TERSEDIA')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO medications (id, kfa_code, name, unit, stock, unit_price) VALUES
+    ('MED-01', '93001011', 'Paracetamol 500 mg Tablet', 'Tablet', 450, 1500),
+    ('MED-02', '93001024', 'Amoxicillin 500 mg Kapsul', 'Kapsul', 320, 3500),
+    ('MED-03', '93001055', 'Amlodipine 5 mg Tablet', 'Tablet', 280, 2800),
+    ('MED-04', '93001089', 'Omeprazole 20 mg Kapsul', 'Kapsul', 210, 4200),
+    ('MED-05', '93001102', 'Ceftriaxone 1 g Injeksi', 'Vial', 85, 45000),
+    ('MED-06', '93001140', 'NaCl 0.9% Infus 500 ml', 'Botol', 160, 18000),
+    ('MED-07', '93001188', 'Metformin 500 mg Tablet', 'Tablet', 390, 1800),
+    ('MED-08', '93001205', 'Salbutamol Nebulizer 2.5 mg', 'Ampul', 95, 14500)
+ON CONFLICT (id) DO NOTHING;
