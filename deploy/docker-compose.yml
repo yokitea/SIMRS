@@ -1,0 +1,57 @@
+services:
+  simrs-postgres:
+    image: postgres:16-alpine
+    container_name: simrs-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: simrs_core
+      POSTGRES_USER: simrs_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_simrs_password}
+    volumes:
+      - simrs_pg_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simrs_user -d simrs_core"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  simrs-api:
+    build:
+      context: ..
+      dockerfile: deploy/dockerfiles/simrs-api.Dockerfile
+    container_name: simrs-api
+    restart: unless-stopped
+    depends_on:
+      simrs-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://simrs_user:${POSTGRES_PASSWORD:-changeme_simrs_password}@simrs-postgres:5432/simrs_core?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-changeme_simrs_jwt_secret}
+      BRAND_NAME: ${BRAND_NAME:-Core SIMRS}
+      HOSPITAL_NAME: ${HOSPITAL_NAME:-RS Digital Indonesia}
+      SIMRS_API_PORT: "8090"
+      RIS_HL7_ADDR: ${RIS_HL7_ADDR:-host.docker.internal:2575}
+      SATUSEHAT_ENV: ${SATUSEHAT_ENV:-staging}
+      SATUSEHAT_ORG_ID: ${SATUSEHAT_ORG_ID:-10000000}
+    ports:
+      - "${SIMRS_API_PORT:-8090}:8090"
+
+  simrs-web:
+    build:
+      context: ..
+      dockerfile: deploy/dockerfiles/web.Dockerfile
+      args:
+        NEXT_PUBLIC_SIMRS_API_URL: ${NEXT_PUBLIC_SIMRS_API_URL:-http://localhost:8090}
+        NEXT_PUBLIC_BRAND_NAME: ${NEXT_PUBLIC_BRAND_NAME:-Core SIMRS}
+        NEXT_PUBLIC_RIS_URL: ${NEXT_PUBLIC_RIS_URL:-http://localhost:3000}
+        NEXT_PUBLIC_PACS_VIEWER_URL: ${NEXT_PUBLIC_PACS_VIEWER_URL:-http://localhost:3001/viewer}
+    container_name: simrs-web
+    restart: unless-stopped
+    depends_on:
+      - simrs-api
+    ports:
+      - "${SIMRS_WEB_PORT:-3002}:3002"
+
+volumes:
+  simrs_pg_data:
