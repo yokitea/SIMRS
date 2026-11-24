@@ -339,7 +339,12 @@ export default function SIMRSConsolePage() {
   }, []);
 
   useEffect(() => {
-    if (token) loadAll();
+    if (!token) return;
+    loadAll();
+    const interval = setInterval(() => {
+      loadAll();
+    }, 5000);
+    return () => clearInterval(interval);
   }, [token, loadAll]);
 
   useEffect(() => {
@@ -723,6 +728,17 @@ export default function SIMRSConsolePage() {
             </>
           )}
 
+          <button
+            className="tab-btn"
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#38bdf8" }}
+            onClick={() => {
+              loadAll();
+              notify("Data live disinkronkan dari server");
+            }}
+            title="Sinkronkan status antrean, farmasi & radiologi sekarang"
+          >
+            <span>🔄</span> Sinkron
+          </button>
           <a className="btn btn-cyan" style={{ padding: "6px 10px", fontSize: 12 }} href={RIS_URL} target="_blank" rel="noreferrer">
             Buka RIS ↗
           </a>
@@ -928,14 +944,14 @@ export default function SIMRSConsolePage() {
                     patCriteria === "NAME"
                       ? "🔍 Ketik Nama Pasien (contoh: Budi, Siti, Hendra)..."
                       : patCriteria === "NIK"
-                      ? "🔍 Ketik NIK KTP 16 digit (contoh: 3171011204850001)..."
-                      : patCriteria === "PHONE"
-                      ? "🔍 Ketik No. HP / WhatsApp (contoh: 081234567801)..."
-                      : patCriteria === "MOTHER"
-                      ? "🔍 Ketik Nama Ibu Kandung (contoh: Siti Aminah, Mariam, Dewi Sartika)..."
-                      : patCriteria === "NORM"
-                      ? "🔍 Ketik No. RM (contoh: RM-2026-001)..."
-                      : "🔍 Cari Nama Pasien, NIK KTP, No. HP, Nama Ibu Kandung, atau No. RM..."
+                        ? "🔍 Ketik NIK KTP 16 digit (contoh: 3171011204850001)..."
+                        : patCriteria === "PHONE"
+                          ? "🔍 Ketik No. HP / WhatsApp (contoh: 081234567801)..."
+                          : patCriteria === "MOTHER"
+                            ? "🔍 Ketik Nama Ibu Kandung (contoh: Siti Aminah, Mariam, Dewi Sartika)..."
+                            : patCriteria === "NORM"
+                              ? "🔍 Ketik No. RM (contoh: RM-2026-001)..."
+                              : "🔍 Cari Nama Pasien, NIK KTP, No. HP, Nama Ibu Kandung, atau No. RM..."
                   }
                   value={patSearch}
                   onChange={(e) => setPatSearch(e.target.value)}
@@ -1527,12 +1543,43 @@ export default function SIMRSConsolePage() {
                       + Kirim E-Resep ke Farmasi
                     </button>
                   </form>
-                  {activeVisitRxs.map((rx) => (
-                    <div key={rx.id} style={{ fontSize: 12, padding: "6px 0", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between" }}>
-                      <span>{rx.medication_name} x{rx.qty} ({rx.dosage})</span>
-                      <span className={`badge ${rx.status === "DISERAHKAN" ? "" : "badge-amber"}`}>{rx.status}</span>
-                    </div>
-                  ))}
+                  {activeVisitRxs.map((rx) => {
+                    const isDone = rx.status === "DISERAHKAN" || rx.status === "SELESAI";
+                    return (
+                      <div
+                        key={rx.id}
+                        style={{
+                          fontSize: 12,
+                          padding: "6px 0",
+                          borderTop: "1px solid var(--border)",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 10,
+                        }}
+                      >
+                        <div>
+                          <span style={{ fontWeight: 600, color: "#f8fafc" }}>{rx.medication_name}</span>{" "}
+                          <span style={{ color: "var(--muted)" }}>x{rx.qty} ({rx.dosage})</span>
+                        </div>
+                        <span
+                          className={`badge ${isDone ? "" : "badge-amber"}`}
+                          style={{
+                            padding: "2px 8px",
+                            fontSize: 10,
+                            borderRadius: 10,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {rx.status === "DISERAHKAN"
+                            ? "✓ SELESAI (DISERAHKAN)"
+                            : rx.status === "SELESAI"
+                            ? "✓ SELESAI"
+                            : "⏳ MENUNGGU DI FARMASI"}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </section>
               </div>
             </div>
@@ -1878,14 +1925,14 @@ export default function SIMRSConsolePage() {
                             u.role === "ADMIN"
                               ? "#c084fc"
                               : u.role === "DOKTER"
-                              ? "#38bdf8"
-                              : u.role === "FARMASI"
-                              ? "#4ade80"
-                              : u.role === "KASIR"
-                              ? "#fbbf24"
-                              : u.role === "PERAWAT"
-                              ? "#2dd4bf"
-                              : "#67e8f9";
+                                ? "#38bdf8"
+                                : u.role === "FARMASI"
+                                  ? "#4ade80"
+                                  : u.role === "KASIR"
+                                    ? "#fbbf24"
+                                    : u.role === "PERAWAT"
+                                      ? "#2dd4bf"
+                                      : "#67e8f9";
                           return (
                             <tr key={u.username}>
                               <td>
@@ -1982,7 +2029,7 @@ export default function SIMRSConsolePage() {
                     </thead>
                     <tbody>
                       <tr>
-                        <td><strong>Admisi & Registrasi Pasien</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Input NIK, No. RM, kunjungan poli/IGD</span></td>
+                        <td><strong>Admisi & Registrasi Pasien</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Input NIK, No. RM, kunjungan poli/IGD</span></td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
@@ -1991,7 +2038,7 @@ export default function SIMRSConsolePage() {
                         <td style={{ textAlign: "center" }}>✅</td>
                       </tr>
                       <tr>
-                        <td><strong>Rekam Medis (RME SOAP) - Baca</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Riwayat alergi, keluhan, diagnosa pasien</span></td>
+                        <td><strong>Rekam Medis (RME SOAP) - Baca</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Riwayat alergi, keluhan, diagnosa pasien</span></td>
                         <td style={{ textAlign: "center" }}>✅</td>
                         <td style={{ textAlign: "center" }}>✅</td>
                         <td style={{ textAlign: "center" }}>❌</td>
@@ -2000,7 +2047,7 @@ export default function SIMRSConsolePage() {
                         <td style={{ textAlign: "center" }}>✅</td>
                       </tr>
                       <tr>
-                        <td><strong>Rekam Medis (RME SOAP) - Tulis</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Input SOAP, asesmen klinis, diagnosa ICD-10</span></td>
+                        <td><strong>Rekam Medis (RME SOAP) - Tulis</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Input SOAP, asesmen klinis, diagnosa ICD-10</span></td>
                         <td style={{ textAlign: "center" }}>✅</td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
@@ -2009,7 +2056,7 @@ export default function SIMRSConsolePage() {
                         <td style={{ textAlign: "center" }}>✅</td>
                       </tr>
                       <tr>
-                        <td><strong>Order Resep Elektronik (e-Prescription)</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Pemilihan obat KFA, dosis, dan signa</span></td>
+                        <td><strong>Order Resep Elektronik (e-Prescription)</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Pemilihan obat KFA, dosis, dan signa</span></td>
                         <td style={{ textAlign: "center" }}>✅</td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
@@ -2018,7 +2065,7 @@ export default function SIMRSConsolePage() {
                         <td style={{ textAlign: "center" }}>✅</td>
                       </tr>
                       <tr>
-                        <td><strong>Dispensing & Mutasi Stok Obat</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Verifikasi resep, penyerahan obat & potongan stok</span></td>
+                        <td><strong>Dispensing & Mutasi Stok Obat</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Verifikasi resep, penyerahan obat & potongan stok</span></td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>✅</td>
@@ -2027,7 +2074,7 @@ export default function SIMRSConsolePage() {
                         <td style={{ textAlign: "center" }}>✅</td>
                       </tr>
                       <tr>
-                        <td><strong>Order Pemeriksaan Radiologi</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Permintaan rontgen/CT/MRI via HL7 ORM</span></td>
+                        <td><strong>Order Pemeriksaan Radiologi</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Permintaan rontgen/CT/MRI via HL7 ORM</span></td>
                         <td style={{ textAlign: "center" }}>✅</td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
@@ -2036,7 +2083,7 @@ export default function SIMRSConsolePage() {
                         <td style={{ textAlign: "center" }}>✅</td>
                       </tr>
                       <tr>
-                        <td><strong>Peluncuran PACS Diagnostic Viewer</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Buka citra DICOM dengan Study-Scoped SSO Token</span></td>
+                        <td><strong>Peluncuran PACS Diagnostic Viewer</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Buka citra DICOM dengan Study-Scoped SSO Token</span></td>
                         <td style={{ textAlign: "center" }}>✅ (Scoped)</td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
@@ -2045,7 +2092,7 @@ export default function SIMRSConsolePage() {
                         <td style={{ textAlign: "center" }}>✅ (Full)</td>
                       </tr>
                       <tr>
-                        <td><strong>Penerbitan SEP BPJS & Kasir Billing</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Simulasi VClaim, INA-CBG & pelunasan kasir</span></td>
+                        <td><strong>Penerbitan SEP BPJS & Kasir Billing</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Simulasi VClaim, INA-CBG & pelunasan kasir</span></td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
@@ -2054,7 +2101,7 @@ export default function SIMRSConsolePage() {
                         <td style={{ textAlign: "center" }}>✅</td>
                       </tr>
                       <tr>
-                        <td><strong>Manajemen Pengguna & Audit Trail</strong><br/><span style={{ fontSize: 11, color: "var(--muted)" }}>Kelola akun, reset password, inspeksi log UU PDP</span></td>
+                        <td><strong>Manajemen Pengguna & Audit Trail</strong><br /><span style={{ fontSize: 11, color: "var(--muted)" }}>Kelola akun, reset password, inspeksi log UU PDP</span></td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
                         <td style={{ textAlign: "center" }}>❌</td>
