@@ -592,3 +592,32 @@ func (p *PostgresStore) Stats(ctx context.Context) (DashboardStats, error) {
 	_ = p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM integration_outbox`).Scan(&st.OutboxCount)
 	return st, nil
 }
+
+func (p *PostgresStore) GetExecutiveMetrics(ctx context.Context) (ExecutiveMetrics, error) {
+	st, err := p.Stats(ctx)
+	if err != nil {
+		return ExecutiveMetrics{}, err
+	}
+	totalBeds := st.BedsAvailable + st.BedsOccupied
+	bor := 0.0
+	if totalBeds > 0 {
+		bor = float64(st.BedsOccupied) / float64(totalBeds) * 100.0
+	}
+	return ExecutiveMetrics{
+		BOR:                 bor,
+		ALOS:                4.2,
+		TOI:                 1.8,
+		BTO:                 42.5,
+		RevenueBPJS:         st.UnpaidRevenue,
+		RevenueCash:         st.PaidRevenue,
+		RevenueInsurance:    18200000,
+		AvgWaitAdmissionMin: 12,
+		AvgWaitClinicMin:    18,
+		AvgWaitPharmacyMin:  14,
+		ClaimApprovalRate:   97.4,
+	}, nil
+}
+
+func (p *PostgresStore) ListStaffCredentials(_ context.Context) ([]StaffCredential, error) {
+	return (&MemoryStore{}).ListStaffCredentials(context.Background())
+}

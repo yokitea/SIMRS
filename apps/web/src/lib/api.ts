@@ -213,3 +213,126 @@ export interface AuditLogItem {
 export function formatIDR(n: number): string {
   return "Rp " + (n || 0).toLocaleString("id-ID");
 }
+
+export interface ExecutiveMetrics {
+  bor: number;
+  alos: number;
+  toi: number;
+  bto: number;
+  revenue_bpjs: number;
+  revenue_cash: number;
+  revenue_insurance: number;
+  avg_wait_admission_min: number;
+  avg_wait_clinic_min: number;
+  avg_wait_pharmacy_min: number;
+  claim_approval_rate: number;
+}
+
+export interface StaffCredential {
+  id: string;
+  full_name: string;
+  role: string;
+  specialty: string;
+  nip: string;
+  str_number: string;
+  str_expiry_date: string;
+  sip_number: string;
+  sip_expiry_date: string;
+  clinical_privilege: string;
+  status: string;
+}
+
+export type WorkstationType =
+  | "CLINIC"
+  | "PHARMACY"
+  | "BILLING"
+  | "ADMISSION"
+  | "RANAP"
+  | "EXECUTIVE"
+  | "HRD"
+  | "ADMIN";
+
+export interface WorkstationMeta {
+  id: WorkstationType;
+  title: string;
+  department: string;
+  badge: string;
+  icon: string;
+  description: string;
+  allowedRoles: string[];
+}
+
+export const WORKSTATIONS: Record<WorkstationType, WorkstationMeta> = {
+  CLINIC: {
+    id: "CLINIC",
+    title: "Workstation Dokter & Poliklinik",
+    department: "Pelayanan Medis Rawat Jalan",
+    badge: "DPJP Clinical Station",
+    icon: "🩺",
+    description: "Antrean terfilter per poli, Rekam Medis Elektronik (RME CPPT/SOAP), dan Order Penunjang RIS/PACS.",
+    allowedRoles: ["DOKTER", "ADMIN"],
+  },
+  PHARMACY: {
+    id: "PHARMACY",
+    title: "Workstation Farmasi & Apotek",
+    department: "Instalasi Farmasi & Depo Obat",
+    badge: "Pharmacy Dispensing",
+    icon: "💊",
+    description: "Antrean e-resep masuk, telaah 3 pilar (administrasi, farmasetik, klinis), dan pemotongan stok obat KFA.",
+    allowedRoles: ["FARMASI", "ADMIN"],
+  },
+  BILLING: {
+    id: "BILLING",
+    title: "Workstation Kasir & Keuangan",
+    department: "Bagian Keuangan & Kasir RS",
+    badge: "Cashier & Billing POS",
+    icon: "💳",
+    description: "Point-of-Sale kasir terpadu (tindakan, jasa medis, obat, radiologi), bridging klaim BPJS, dan kwitansi resmi.",
+    allowedRoles: ["KASIR", "ADMIN"],
+  },
+  ADMISSION: {
+    id: "ADMISSION",
+    title: "Workstation Admisi & Registrasi",
+    department: "Front Office & Rekam Medis",
+    badge: "Patient Admission & EMPI",
+    icon: "📋",
+    description: "Pencarian multi-parameter EMPI, registrasi pasien baru, direktori poliklinik, dan penerbitan SEP BPJS.",
+    allowedRoles: ["ADMISI", "ADMIN"],
+  },
+  RANAP: {
+    id: "RANAP",
+    title: "Workstation Rawat Inap & Bangsal",
+    department: "Instalasi Rawat Inap & ICU",
+    badge: "Inpatient Ward & Bed Mgmt",
+    icon: "🛏️",
+    description: "Status tempat tidur bangsal real-time, monitoring BOR, observasi TTV, dan pemulangan pasien.",
+    allowedRoles: ["PERAWAT", "DOKTER", "ADMIN"],
+  },
+  EXECUTIVE: {
+    id: "EXECUTIVE",
+    title: "Executive Command Center",
+    department: "Direksi & Manajemen Rumah Sakit",
+    badge: "Hospital Intelligence",
+    icon: "📊",
+    description: "Grafik efisiensi Barber-Johnson (BOR/ALOS/TOI/BTO), arus kas pendapatan harian, dan SLA waktu tunggu pelayanan.",
+    allowedRoles: ["DIREKSI", "ADMIN"],
+  },
+  HRD: {
+    id: "HRD",
+    title: "Workstation SDM & Kredensial Medis",
+    department: "Bagian SDM & Komite Medik",
+    badge: "Staff Credentialing & STR/SIP",
+    icon: "👥",
+    description: "Early Warning System masa berlaku STR/SIP dokter & perawat, database SPK/RKK (Buku Putih), dan roster jaga.",
+    allowedRoles: ["HRD", "ADMIN"],
+  },
+  ADMIN: {
+    id: "ADMIN",
+    title: "Workstation Administrator IT & IAM",
+    department: "Instalasi Teknologi Informasi & SIMRS",
+    badge: "IT Security & System Control",
+    icon: "🔐",
+    description: "Manajemen identitas pengguna (IAM), RBAC, interactive audit trail, dan telemetri integrasi RIS/PACS & SATUSEHAT.",
+    allowedRoles: ["ADMIN"],
+  },
+};

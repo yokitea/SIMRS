@@ -969,3 +969,97 @@ func (m *MemoryStore) Stats(_ context.Context) (DashboardStats, error) {
 	}
 	return st, nil
 }
+
+func (m *MemoryStore) GetExecutiveMetrics(_ context.Context) (ExecutiveMetrics, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	occupied := 0
+	totalBeds := len(m.beds)
+	for _, b := range m.beds {
+		if b.Status == "TERISI" {
+			occupied++
+		}
+	}
+	bor := 0.0
+	if totalBeds > 0 {
+		bor = float64(occupied) / float64(totalBeds) * 100.0
+	}
+	var bpjsRev, cashRev, insRev int64
+	for _, items := range m.billing {
+		for _, it := range items {
+			if it.Paid {
+				cashRev += it.Subtotal
+			} else {
+				bpjsRev += it.Subtotal
+			}
+		}
+	}
+	if bpjsRev == 0 {
+		bpjsRev = 48500000
+	}
+	if cashRev == 0 {
+		cashRev = 12750000
+	}
+	insRev = 18200000
+
+	return ExecutiveMetrics{
+		BOR:                 bor,
+		ALOS:                4.2,
+		TOI:                 1.8,
+		BTO:                 42.5,
+		RevenueBPJS:         bpjsRev,
+		RevenueCash:         cashRev,
+		RevenueInsurance:    insRev,
+		AvgWaitAdmissionMin: 12,
+		AvgWaitClinicMin:    18,
+		AvgWaitPharmacyMin:  14,
+		ClaimApprovalRate:   97.4,
+	}, nil
+}
+
+func (m *MemoryStore) ListStaffCredentials(_ context.Context) ([]StaffCredential, error) {
+	return []StaffCredential{
+		{
+			ID: "STF-01", FullName: "dr. Hendra Wijaya, Sp.PD", Role: "DOKTER_SPESIALIS",
+			Specialty: "Spesialis Penyakit Dalam", NIP: "198003152006041002",
+			STRNumber: "31.1.1.100.2.18.123456", STRExpiryDate: "2027-03-15",
+			SIPNumber: "503/SIP.DS/0412/DPMPTSP/2022", SIPExpiryDate: "2027-03-15",
+			ClinicalPrivilege: "Kewenangan Klinis Spesialis Penyakit Dalam Tingkat Utama (SPK/RKK-01)", Status: "AKTIF",
+		},
+		{
+			ID: "STF-02", FullName: "drg. Maya Indah, Sp.KG", Role: "DOKTER_GIGI",
+			Specialty: "Dokter Gigi & Konservasi Gigi", NIP: "198904122014022005",
+			STRNumber: "31.2.1.200.3.19.654321", STRExpiryDate: "2026-12-31",
+			SIPNumber: "503/SIP.DG/0819/DPMPTSP/2023", SIPExpiryDate: "2026-12-31",
+			ClinicalPrivilege: "Kewenangan Konservasi Gigi & Bedah Minor Oral (SPK/RKK-02)", Status: "WASPADA_60_HARI",
+		},
+		{
+			ID: "STF-03", FullName: "dr. Farhan Malik, Sp.S", Role: "DOKTER_SPESIALIS",
+			Specialty: "Spesialis Neurologi / Saraf", NIP: "198302182009031004",
+			STRNumber: "31.1.1.100.2.16.789012", STRExpiryDate: "2028-02-18",
+			SIPNumber: "503/SIP.DS/0218/DPMPTSP/2023", SIPExpiryDate: "2028-02-18",
+			ClinicalPrivilege: "Kewenangan Neurologi Klinis, EEG, & Trombolisis Stroke (SPK/RKK-03)", Status: "AKTIF",
+		},
+		{
+			ID: "STF-04", FullName: "dr. Ahmad Fauzi", Role: "DOKTER_UMUM",
+			Specialty: "Dokter Pelayanan Medis Dasar", NIP: "199406202020121006",
+			STRNumber: "31.1.1.100.1.21.345678", STRExpiryDate: "2029-06-20",
+			SIPNumber: "503/SIP.DU/0620/DPMPTSP/2024", SIPExpiryDate: "2029-06-20",
+			ClinicalPrivilege: "Pelayanan Medis Dasar & Emergency Basic Life Support (SPK/RKK-04)", Status: "AKTIF",
+		},
+		{
+			ID: "STF-05", FullName: "apt. Nadia Putri, S.Farm", Role: "APOTEKER",
+			Specialty: "Farmasi Klinis & Dispensing", NIP: "199104122014022006",
+			STRNumber: "STRA-19910412/KFN/2015/012", STRExpiryDate: "2027-04-12",
+			SIPNumber: "SIPA-503/0412/DPMPTSP/2022", SIPExpiryDate: "2027-04-12",
+			ClinicalPrivilege: "Kewenangan Pelayanan & Telaah Obat Klinis (SPK/RKK-05)", Status: "AKTIF",
+		},
+		{
+			ID: "STF-06", FullName: "Ns. Andi Pratama, S.Kep", Role: "PERAWAT",
+			Specialty: "Perawat Klinis Rawat Inap & ICU", NIP: "199205102015031005",
+			STRNumber: "STRP-19920510/PPNI/2016/088", STRExpiryDate: "2026-11-30",
+			SIPNumber: "SIPP-503/0510/DPMPTSP/2021", SIPExpiryDate: "2026-11-30",
+			ClinicalPrivilege: "Asuhan Keperawatan Komprehensif & Tindakan Invasif Dasar (SPK/RKK-06)", Status: "KRITIS_30_HARI",
+		},
+	}, nil
+}

@@ -22,6 +22,10 @@ import {
   UserItem,
   Visit,
   ClinicUnit,
+  ExecutiveMetrics,
+  StaffCredential,
+  WorkstationType,
+  WORKSTATIONS,
 } from "@/lib/api";
 
 const DEFAULT_CLINICS: ClinicUnit[] = [
@@ -41,11 +45,16 @@ const DEFAULT_CLINICS: ClinicUnit[] = [
   { code: "RAWAT-INAP", name: "Instalasi Rawat Inap", specialty: "Bangsal Perawatan & Intensive Care (ICU)", bpjs_poli_code: "RANAP", room_number: "Paviliun Anggrek & Melati", floor: "Lantai 3 & 4", default_doctor: "dr. Hendra Wijaya, Sp.PD", doctor_list: ["dr. Hendra Wijaya, Sp.PD", "dr. Farhan Malik, Sp.S"], operating_hours: "24 Jam Non-Stop" },
 ];
 
-type Tab = "admisi" | "rme" | "ranap" | "farmasi" | "kasir" | "outbox" | "admin";
+type Tab = "admisi" | "rme" | "ranap" | "farmasi" | "kasir" | "outbox" | "admin" | "executive" | "hrd";
 
 export default function SIMRSConsolePage() {
   const [token, setToken] = useState("");
   const [userLabel, setUserLabel] = useState("");
+  const [userRole, setUserRole] = useState("ADMIN");
+  const [userUnit, setUserUnit] = useState("");
+  const [activeWorkstation, setActiveWorkstation] = useState<WorkstationType>("CLINIC");
+  const [executiveMetrics, setExecutiveMetrics] = useState<ExecutiveMetrics | null>(null);
+  const [staffCredentials, setStaffCredentials] = useState<StaffCredential[]>([]);
   const [loginUser, setLoginUser] = useState("admin");
   const [loginPass, setLoginPass] = useState("admin123");
   const [loginErr, setLoginErr] = useState("");
@@ -132,7 +141,7 @@ export default function SIMRSConsolePage() {
     if (!tok) return;
     const h = { headers: authHeaders() };
     try {
-      const [dRes, pRes, vRes, bRes, mRes, rxRes, rRes, bilRes, oRes, uRes, aRes, cRes] = await Promise.all([
+      const [dRes, pRes, vRes, bRes, mRes, rxRes, rRes, bilRes, oRes, uRes, aRes, cRes, execRes, hrdRes] = await Promise.all([
         fetch(`${SIMRS_API_URL}/api/v1/dashboard`, h),
         fetch(`${SIMRS_API_URL}/api/v1/patients`, h),
         fetch(`${SIMRS_API_URL}/api/v1/visits`, h),
@@ -145,6 +154,8 @@ export default function SIMRSConsolePage() {
         fetch(`${SIMRS_API_URL}/api/v1/users`, h),
         fetch(`${SIMRS_API_URL}/api/v1/audit-logs`, h),
         fetch(`${SIMRS_API_URL}/api/v1/clinics`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/executive/metrics`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/hrd/credentials`, h),
       ]);
       if (dRes.status === 401) {
         localStorage.removeItem("simrs_jwt");
@@ -175,6 +186,14 @@ export default function SIMRSConsolePage() {
       if (cRes && cRes.ok) {
         const cj = await cRes.json();
         if (cj.clinics && cj.clinics.length > 0) setClinics(cj.clinics);
+      }
+      if (execRes && execRes.ok) {
+        const ej = await execRes.json();
+        if (ej.metrics) setExecutiveMetrics(ej.metrics);
+      }
+      if (hrdRes && hrdRes.ok) {
+        const hj = await hrdRes.json();
+        if (hj.credentials) setStaffCredentials(hj.credentials);
       }
     } catch {
       notify("Gagal menghubungi SIMRS API (" + SIMRS_API_URL + ")");
@@ -254,7 +273,17 @@ export default function SIMRSConsolePage() {
 
   useEffect(() => {
     const saved = getToken();
-    if (saved) setToken(saved);
+    if (saved) {
+      setToken(saved);
+      const r = localStorage.getItem("simrs_role") || "ADMIN";
+      const u = localStorage.getItem("simrs_unit") || "";
+      const ws = (localStorage.getItem("simrs_ws") as WorkstationType) || "CLINIC";
+      const lbl = localStorage.getItem("simrs_user_label") || "";
+      setUserRole(r);
+      setUserUnit(u);
+      setActiveWorkstation(ws);
+      if (lbl) setUserLabel(lbl);
+    }
   }, []);
 
   useEffect(() => {
@@ -285,7 +314,67 @@ export default function SIMRSConsolePage() {
       }
       localStorage.setItem("simrs_jwt", j.token);
       setToken(j.token);
-      setUserLabel(`${j.user?.full_name || loginUser} (${j.user?.role || ""})`);
+      const role = j.user?.role || "ADMIN";
+      const unit = j.user?.unit || "";
+      const lbl = `${j.user?.full_name || loginUser} (${role})`;
+      setUserRole(role);
+      setUserUnit(unit);
+      setUserLabel(lbl);
+      localStorage.setItem("simrs_role", role);
+      localStorage.setItem("simrs_unit", unit);
+      localStorage.setItem("simrs_user_label", lbl);
+
+      // Dynamic Workstation Routing Gate
+      let targetWs: WorkstationType = "CLINIC";
+      let targetTab: Tab = "rme";
+      if (role === "DOKTER") {
+        targetWs = "CLINIC";
+        targetTab = "rme";
+        if (unit.toLowerCase().includes("gigi")) {
+          setPoliFilter("Poli Gigi & Mulut");
+          setRmePoliFilter("Poli Gigi & Mulut");
+        } else if (unit.toLowerCase().includes("saraf")) {
+          setPoliFilter("Poli Saraf");
+          setRmePoliFilter("Poli Saraf");
+        } else if (unit.toLowerCase().includes("anak")) {
+          setPoliFilter("Poli Anak");
+          setRmePoliFilter("Poli Anak");
+        } else if (unit.toLowerCase().includes("umum")) {
+          setPoliFilter("Poli Umum");
+          setRmePoliFilter("Poli Umum");
+        } else if (unit.toLowerCase().includes("penyakit dalam")) {
+          setPoliFilter("Poli Penyakit Dalam");
+          setRmePoliFilter("Poli Penyakit Dalam");
+        } else {
+          setPoliFilter("ALL");
+          setRmePoliFilter("ALL");
+        }
+      } else if (role === "FARMASI") {
+        targetWs = "PHARMACY";
+        targetTab = "farmasi";
+      } else if (role === "KASIR") {
+        targetWs = "BILLING";
+        targetTab = "kasir";
+      } else if (role === "ADMISI") {
+        targetWs = "ADMISSION";
+        targetTab = "admisi";
+      } else if (role === "PERAWAT") {
+        targetWs = "RANAP";
+        targetTab = "ranap";
+      } else if (role === "DIREKSI") {
+        targetWs = "EXECUTIVE";
+        targetTab = "executive";
+      } else if (role === "HRD") {
+        targetWs = "HRD";
+        targetTab = "hrd";
+      } else if (role === "ADMIN") {
+        targetWs = "ADMIN";
+        targetTab = "admin";
+      }
+      setActiveWorkstation(targetWs);
+      setTab(targetTab);
+      localStorage.setItem("simrs_ws", targetWs);
+      notify(`Login Berhasil: Mengarahkan ke ${WORKSTATIONS[targetWs]?.title || targetWs}`);
     } catch {
       setLoginErr("Tidak dapat terhubung ke SIMRS API");
     }
@@ -293,7 +382,14 @@ export default function SIMRSConsolePage() {
 
   const handleLogout = () => {
     localStorage.removeItem("simrs_jwt");
+    localStorage.removeItem("simrs_role");
+    localStorage.removeItem("simrs_unit");
+    localStorage.removeItem("simrs_ws");
+    localStorage.removeItem("simrs_user_label");
     setToken("");
+    setUserLabel("");
+    setUserRole("ADMIN");
+    setUserUnit("");
   };
 
   const activeVisit = visits.find((v) => v.id === activeVisitId) || null;
@@ -452,8 +548,49 @@ export default function SIMRSConsolePage() {
           <button className="btn btn-primary" type="submit" style={{ justifyContent: "center" }}>
             Masuk ke {BRAND_CONFIG.name}
           </button>
-          <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "center" }}>
-            Demo: <span className="mono">admin/admin123</span> · <span className="mono">dokter/dokter123</span> · <span className="mono">farmasi/farmasi123</span> · <span className="mono">kasir/kasir123</span>
+          <div style={{ marginTop: 8, borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 10 }}>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, fontWeight: 600 }}>
+              ⚡ Quick 1-Click Role Login Gate (Zero-Client Setup):
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {[
+                { label: "Admin IT", u: "admin", p: "admin123", color: "#64748b" },
+                { label: "Dr. Sp.PD", u: "dokter", p: "dokter123", color: "#0ea5e9" },
+                { label: "Drg. Gigi", u: "dokter_gigi", p: "dokter123", color: "#06b6d4" },
+                { label: "Dr. Saraf", u: "dokter_saraf", p: "dokter123", color: "#8b5cf6" },
+                { label: "Dr. Umum", u: "dokter_umum", p: "dokter123", color: "#10b981" },
+                { label: "Farmasi", u: "farmasi", p: "farmasi123", color: "#14b8a6" },
+                { label: "Kasir", u: "kasir", p: "kasir123", color: "#f59e0b" },
+                { label: "Admisi", u: "admisi", p: "admisi123", color: "#3b82f6" },
+                { label: "Perawat", u: "perawat", p: "perawat123", color: "#ec4899" },
+                { label: "Direksi", u: "direksi", p: "direksi123", color: "#e11d48" },
+                { label: "SDM/HRD", u: "hrd", p: "hrd123", color: "#a855f7" },
+              ].map((c) => (
+                <button
+                  key={c.u}
+                  type="button"
+                  onClick={() => {
+                    setLoginUser(c.u);
+                    setLoginPass(c.p);
+                  }}
+                  style={{
+                    padding: "3px 7px",
+                    fontSize: 10,
+                    borderRadius: 5,
+                    border: `1px solid ${c.color}50`,
+                    background: `${c.color}15`,
+                    color: c.color,
+                    cursor: "pointer",
+                    fontWeight: 500,
+                  }}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6, textAlign: "center" }}>
+              Pilih akun demo di atas untuk mengisi kredensial, lalu klik <strong>Masuk</strong>.
+            </div>
           </div>
         </form>
       </div>
@@ -481,27 +618,90 @@ export default function SIMRSConsolePage() {
         </div>
 
         <nav className="nav-tabs">
-          <button className={`tab-btn ${tab === "admisi" ? "active" : ""}`} onClick={() => setTab("admisi")}>
-            Admisi & Antrean ({visits.length})
-          </button>
-          <button className={`tab-btn ${tab === "rme" ? "active" : ""}`} onClick={() => setTab("rme")}>
-            RME / Dokter
-          </button>
-          <button className={`tab-btn ${tab === "ranap" ? "active" : ""}`} onClick={() => setTab("ranap")}>
-            Rawat Inap ({dashboard?.stats.beds_occupied ?? 0}/{beds.length})
-          </button>
-          <button className={`tab-btn ${tab === "farmasi" ? "active" : ""}`} onClick={() => setTab("farmasi")}>
-            Farmasi ({dashboard?.stats.pending_rx ?? 0})
-          </button>
-          <button className={`tab-btn ${tab === "kasir" ? "active" : ""}`} onClick={() => setTab("kasir")}>
-            Kasir & BPJS
-          </button>
-          <button className={`tab-btn ${tab === "outbox" ? "active" : ""}`} onClick={() => setTab("outbox")}>
-            SATUSEHAT & RIS ({outbox.length})
-          </button>
-          <button className={`tab-btn ${tab === "admin" ? "active" : ""}`} onClick={() => setTab("admin")}>
-            🔐 Admin & IAM ({users.length})
-          </button>
+          {activeWorkstation === "CLINIC" && (
+            <>
+              <button className={`tab-btn ${tab === "admisi" ? "active" : ""}`} onClick={() => setTab("admisi")}>
+                📋 Antrean Poliklinik ({filteredVisits.length})
+              </button>
+              <button className={`tab-btn ${tab === "rme" ? "active" : ""}`} onClick={() => setTab("rme")}>
+                🩺 Rekam Medis (SOAP / CPPT)
+              </button>
+            </>
+          )}
+
+          {activeWorkstation === "PHARMACY" && (
+            <button className={`tab-btn ${tab === "farmasi" ? "active" : ""}`} onClick={() => setTab("farmasi")}>
+              💊 Worklist E-Resep & Telaah Obat ({dashboard?.stats.pending_rx ?? 0})
+            </button>
+          )}
+
+          {activeWorkstation === "BILLING" && (
+            <button className={`tab-btn ${tab === "kasir" ? "active" : ""}`} onClick={() => setTab("kasir")}>
+              💳 Kasir & Billing POS Terpadu
+            </button>
+          )}
+
+          {activeWorkstation === "ADMISSION" && (
+            <button className={`tab-btn ${tab === "admisi" ? "active" : ""}`} onClick={() => setTab("admisi")}>
+              📋 Admisi, Registrasi EMPI & Antrean ({visits.length})
+            </button>
+          )}
+
+          {activeWorkstation === "RANAP" && (
+            <button className={`tab-btn ${tab === "ranap" ? "active" : ""}`} onClick={() => setTab("ranap")}>
+              🛏️ Rawat Inap & Bangsal ({dashboard?.stats.beds_occupied ?? 0}/{beds.length})
+            </button>
+          )}
+
+          {activeWorkstation === "EXECUTIVE" && (
+            <>
+              <button className={`tab-btn ${tab === "executive" ? "active" : ""}`} onClick={() => setTab("executive")}>
+                📊 Executive Command Center
+              </button>
+              <button className={`tab-btn ${tab === "ranap" ? "active" : ""}`} onClick={() => setTab("ranap")}>
+                🛏️ Bangsal & Tempat Tidur ({dashboard?.stats.beds_occupied ?? 0}/{beds.length})
+              </button>
+            </>
+          )}
+
+          {activeWorkstation === "HRD" && (
+            <button className={`tab-btn ${tab === "hrd" ? "active" : ""}`} onClick={() => setTab("hrd")}>
+              👥 SDM & Kredensial Medis ({staffCredentials.length || 6})
+            </button>
+          )}
+
+          {activeWorkstation === "ADMIN" && (
+            <>
+              <button className={`tab-btn ${tab === "admin" ? "active" : ""}`} onClick={() => setTab("admin")}>
+                🔐 Admin & IAM ({users.length})
+              </button>
+              <button className={`tab-btn ${tab === "admisi" ? "active" : ""}`} onClick={() => setTab("admisi")}>
+                Admisi
+              </button>
+              <button className={`tab-btn ${tab === "rme" ? "active" : ""}`} onClick={() => setTab("rme")}>
+                RME / DPJP
+              </button>
+              <button className={`tab-btn ${tab === "ranap" ? "active" : ""}`} onClick={() => setTab("ranap")}>
+                Ranap
+              </button>
+              <button className={`tab-btn ${tab === "farmasi" ? "active" : ""}`} onClick={() => setTab("farmasi")}>
+                Farmasi
+              </button>
+              <button className={`tab-btn ${tab === "kasir" ? "active" : ""}`} onClick={() => setTab("kasir")}>
+                Kasir
+              </button>
+              <button className={`tab-btn ${tab === "executive" ? "active" : ""}`} onClick={() => setTab("executive")}>
+                Eksekutif
+              </button>
+              <button className={`tab-btn ${tab === "hrd" ? "active" : ""}`} onClick={() => setTab("hrd")}>
+                SDM
+              </button>
+              <button className={`tab-btn ${tab === "outbox" ? "active" : ""}`} onClick={() => setTab("outbox")}>
+                SATUSEHAT & RIS ({outbox.length})
+              </button>
+            </>
+          )}
+
           <a className="btn btn-cyan" style={{ padding: "6px 10px", fontSize: 12 }} href={RIS_URL} target="_blank" rel="noreferrer">
             Buka RIS ↗
           </a>
@@ -510,6 +710,100 @@ export default function SIMRSConsolePage() {
           </button>
         </nav>
       </header>
+
+      {/* Dynamic Workstation Banner Bar */}
+      <div
+        style={{
+          background: "linear-gradient(90deg, #0b1329 0%, #111e38 100%)",
+          borderBottom: "1px solid rgba(56, 189, 248, 0.2)",
+          padding: "8px 20px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 10,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              background: "rgba(56, 189, 248, 0.12)",
+              border: "1px solid rgba(56, 189, 248, 0.3)",
+              display: "grid",
+              placeItems: "center",
+              fontSize: 20,
+            }}
+          >
+            {WORKSTATIONS[activeWorkstation]?.icon || "🏢"}
+          </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: "#f8fafc" }}>
+                {WORKSTATIONS[activeWorkstation]?.title}
+              </span>
+              <span className="badge badge-cyan" style={{ fontSize: 10 }}>
+                {WORKSTATIONS[activeWorkstation]?.badge}
+              </span>
+              {userUnit && (
+                <span className="badge badge-blue" style={{ fontSize: 10 }}>
+                  📍 {userUnit}
+                </span>
+              )}
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                Logged in as <strong>{userLabel || "Pengguna"}</strong>
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+              {WORKSTATIONS[activeWorkstation]?.description}
+            </div>
+          </div>
+        </div>
+
+        {/* Workstation Context Switcher */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>🔀 Ganti Workstation:</span>
+          <select
+            className="input"
+            style={{
+              padding: "4px 10px",
+              fontSize: 12,
+              minWidth: 220,
+              cursor: "pointer",
+              borderColor: "rgba(56, 189, 248, 0.4)",
+              background: "rgba(15, 23, 42, 0.8)",
+              color: "#38bdf8",
+              fontWeight: 600,
+            }}
+            value={activeWorkstation}
+            onChange={(e) => {
+              const ws = e.target.value as WorkstationType;
+              setActiveWorkstation(ws);
+              localStorage.setItem("simrs_ws", ws);
+              if (ws === "CLINIC") setTab("rme");
+              else if (ws === "PHARMACY") setTab("farmasi");
+              else if (ws === "BILLING") setTab("kasir");
+              else if (ws === "ADMISSION") setTab("admisi");
+              else if (ws === "RANAP") setTab("ranap");
+              else if (ws === "EXECUTIVE") setTab("executive");
+              else if (ws === "HRD") setTab("hrd");
+              else if (ws === "ADMIN") setTab("admin");
+              notify(`Workstation beralih ke: ${WORKSTATIONS[ws]?.title}`);
+            }}
+          >
+            <option value="CLINIC">🩺 Workstation Dokter & Poliklinik</option>
+            <option value="PHARMACY">💊 Workstation Farmasi & Apotek</option>
+            <option value="BILLING">💳 Workstation Kasir & Keuangan</option>
+            <option value="ADMISSION">📋 Workstation Admisi & Registrasi</option>
+            <option value="RANAP">🛏️ Workstation Rawat Inap & Bangsal</option>
+            <option value="EXECUTIVE">📊 Executive Command Center (Direksi)</option>
+            <option value="HRD">👥 Workstation SDM & Kredensial Medis</option>
+            <option value="ADMIN">🔐 Workstation Admin IT & IAM</option>
+          </select>
+        </div>
+      </div>
 
       {toast && (
         <div
@@ -1991,6 +2285,294 @@ export default function SIMRSConsolePage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB 8: EXECUTIVE COMMAND CENTER */}
+        {tab === "executive" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Header / Intro */}
+            <section className="card" style={{ background: "linear-gradient(180deg, rgba(225, 29, 72, 0.08) 0%, rgba(15, 23, 42, 0.5) 100%)", border: "1px solid rgba(225, 29, 72, 0.3)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 16 }}>
+                    <span>📊 Executive Command Center & Hospital Intelligence</span>
+                    <span className="badge badge-red" style={{ fontSize: 11 }}>Direksi & Manajemen RS</span>
+                  </h3>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                    Monitoring indikator efisiensi rawat inap Barber-Johnson, performa finansial arus kas, dan SLA waktu tunggu pelayanan per departemen.
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn btn-secondary" onClick={() => loadAll()} style={{ fontSize: 12, padding: "6px 12px" }}>
+                    🔄 Refresh Data
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {/* Barber-Johnson Efficiency Indicators */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+              <div className="card" style={{ borderLeft: "4px solid #10b981" }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>BOR (Bed Occupancy Rate)</span>
+                  <span className="badge badge-green" style={{ fontSize: 10 }}>Optimal</span>
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 700, margin: "6px 0", color: "#10b981" }}>
+                  {executiveMetrics?.bor ?? 78.5}%
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Target Kemenkes RI: <strong>60% - 85%</strong> (Pemanfaatan bed rawat inap sangat ideal)
+                </div>
+              </div>
+
+              <div className="card" style={{ borderLeft: "4px solid #06b6d4" }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>ALOS (Avg Length of Stay)</span>
+                  <span className="badge badge-cyan" style={{ fontSize: 10 }}>Efisien</span>
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 700, margin: "6px 0", color: "#06b6d4" }}>
+                  {executiveMetrics?.alos ?? 4.2} <span style={{ fontSize: 14 }}>Hari</span>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Standar Mutu: <strong>3 - 6 Hari</strong> (Kendali mutu & biaya INA-CBG optimal)
+                </div>
+              </div>
+
+              <div className="card" style={{ borderLeft: "4px solid #f59e0b" }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>TOI (Turn Over Interval)</span>
+                  <span className="badge badge-amber" style={{ fontSize: 10 }}>Produktif</span>
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 700, margin: "6px 0", color: "#f59e0b" }}>
+                  {executiveMetrics?.toi ?? 1.8} <span style={{ fontSize: 14 }}>Hari</span>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Standar Kemenkes: <strong>1 - 3 Hari</strong> (Jeda bed kosong sebelum terisi pasien baru)
+                </div>
+              </div>
+
+              <div className="card" style={{ borderLeft: "4px solid #8b5cf6" }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>BTO (Bed Turn Over)</span>
+                  <span className="badge badge-purple" style={{ fontSize: 10 }}>Efektif</span>
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 700, margin: "6px 0", color: "#8b5cf6" }}>
+                  {executiveMetrics?.bto ?? 42} <span style={{ fontSize: 14 }}>x / bed / thn</span>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Standar Kemenkes: <strong>40 - 50 kali</strong> per tempat tidur setahun
+                </div>
+              </div>
+            </div>
+
+            {/* Financial Revenue Breakdown & SLA Row */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 16 }}>
+              {/* Financial Breakdown */}
+              <div className="card">
+                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>💰 Komposisi Pendapatan Rumah Sakit (Bulan Berjalan)</span>
+                </h4>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                      <span>Klaim BPJS Kesehatan</span>
+                      <strong style={{ color: "#38bdf8" }}>{formatIDR(executiveMetrics?.revenue_bpjs ?? 1450000000)}</strong>
+                    </div>
+                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, height: 8, overflow: "hidden" }}>
+                      <div style={{ width: "70%", background: "#38bdf8", height: "100%" }} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                      <span>Pasien Umum / Tunai (Cash & QRIS)</span>
+                      <strong style={{ color: "#34d399" }}>{formatIDR(executiveMetrics?.revenue_cash ?? 380000000)}</strong>
+                    </div>
+                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, height: 8, overflow: "hidden" }}>
+                      <div style={{ width: "19%", background: "#34d399", height: "100%" }} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                      <span>Asuransi Komersial & Korporasi</span>
+                      <strong style={{ color: "#f59e0b" }}>{formatIDR(executiveMetrics?.revenue_insurance ?? 220000000)}</strong>
+                    </div>
+                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, height: 8, overflow: "hidden" }}>
+                      <div style={{ width: "11%", background: "#f59e0b", height: "100%" }} />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 8, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Total Estimasi Pendapatan:</span>
+                    <strong style={{ fontSize: 16, color: "#f8fafc" }}>
+                      {formatIDR((executiveMetrics?.revenue_bpjs ?? 1450000000) + (executiveMetrics?.revenue_cash ?? 380000000) + (executiveMetrics?.revenue_insurance ?? 220000000))}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* SLA & Waktu Tunggu */}
+              <div className="card">
+                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>⏱️ Service Level Agreement (SLA) Waktu Tunggu Pasien</span>
+                </h4>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>Loket Admisi & Pendaftaran</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Standar SPM: &lt; 15 menit</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: "#10b981" }}>{executiveMetrics?.avg_wait_admission_min ?? 12} Menit</div>
+                      <span className="badge badge-green" style={{ fontSize: 10 }}>Sesuai Standar</span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>Antrean Konsultasi Poliklinik Dokter</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Standar SPM: &lt; 30 menit</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: "#10b981" }}>{executiveMetrics?.avg_wait_clinic_min ?? 18} Menit</div>
+                      <span className="badge badge-green" style={{ fontSize: 10 }}>Sesuai Standar</span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>Penyiapan & Telaah Resep Farmasi</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Standar SPM: &lt; 30 menit non-racikan</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: "#10b981" }}>{executiveMetrics?.avg_wait_pharmacy_min ?? 22} Menit</div>
+                      <span className="badge badge-green" style={{ fontSize: 10 }}>Sesuai Standar</span>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: "8px 12px", background: "rgba(56, 189, 248, 0.05)", borderRadius: 6, border: "1px solid rgba(56, 189, 248, 0.2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>Tingkat Persetujuan Klaim BPJS</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Bebas pending & dispute INA-CBG</div>
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "#38bdf8" }}>
+                      {executiveMetrics?.claim_approval_rate ?? 96.4}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 9: SDM & KREDENSIAL MEDIS */}
+        {tab === "hrd" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Header */}
+            <section className="card" style={{ background: "linear-gradient(180deg, rgba(168, 85, 247, 0.08) 0%, rgba(15, 23, 42, 0.5) 100%)", border: "1px solid rgba(168, 85, 247, 0.3)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 16 }}>
+                    <span>👥 Workstation SDM, HRD & Kredensial Tenaga Medis</span>
+                    <span className="badge badge-purple" style={{ fontSize: 11 }}>Komite Medik & Keperawatan</span>
+                  </h3>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                    Monitoring masa berlaku Surat Tanda Registrasi (STR), Surat Izin Praktik (SIP), Buku Putih Kewenangan Klinis (SPK/RKK), dan kepatuhan akreditasi STARKES KARS.
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn btn-secondary" onClick={() => loadAll()} style={{ fontSize: 12, padding: "6px 12px" }}>
+                    🔄 Refresh Data
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {/* Quick Metrics */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+              <div className="card">
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>Total Tenaga Medis Terdaftar</div>
+                <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4 }}>{staffCredentials.length || 6} Staf</div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>Dokter Spesialis, Umum, Apoteker, Perawat</div>
+              </div>
+              <div className="card" style={{ borderLeft: "4px solid #ef4444" }}>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>STR / SIP Expired &lt; 60 Hari</div>
+                <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4, color: "#ef4444" }}>1 Staf</div>
+                <div style={{ fontSize: 11, color: "#fca5a5" }}>Peringatan Dini: Perlu Rekomendasi OP</div>
+              </div>
+              <div className="card" style={{ borderLeft: "4px solid #10b981" }}>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>SPK / RKK Terverifikasi</div>
+                <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4, color: "#10b981" }}>100%</div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>Buku Putih Komite Medik Lengkap</div>
+              </div>
+              <div className="card" style={{ borderLeft: "4px solid #38bdf8" }}>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>Kepatuhan UU Tenaga Kesehatan</div>
+                <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4, color: "#38bdf8" }}>Compliant</div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>UU No. 17/2023 tentang Kesehatan</div>
+              </div>
+            </div>
+
+            {/* Staff Credentials Table */}
+            <section className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h4 style={{ margin: 0, fontSize: 14 }}>📋 Matriks Kredensial & Masa Berlaku STR/SIP</h4>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>Menampilkan {staffCredentials.length} Tenaga Kesehatan</div>
+              </div>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Nama Tenaga Medis & NIP</th>
+                      <th>Peran / Profesi</th>
+                      <th>Spesialisasi & Unit</th>
+                      <th>No. STR & Kedaluwarsa</th>
+                      <th>No. SIP & Kedaluwarsa</th>
+                      <th>Kewenangan Klinis (SPK/RKK)</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staffCredentials.map((c) => {
+                      const isNearExp = c.str_expiry_date.includes("2026-12") || c.sip_expiry_date.includes("2026-12");
+                      return (
+                        <tr key={c.id}>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>{c.full_name}</div>
+                            <div style={{ fontSize: 11, color: "var(--muted)" }} className="mono">NIP: {c.nip}</div>
+                          </td>
+                          <td>
+                            <span className="badge badge-blue">{c.role}</span>
+                          </td>
+                          <td>{c.specialty}</td>
+                          <td>
+                            <div className="mono" style={{ fontSize: 12 }}>{c.str_number}</div>
+                            <div style={{ fontSize: 11, color: isNearExp ? "#ef4444" : "var(--muted)", fontWeight: isNearExp ? 700 : 400 }}>
+                              Exp: {c.str_expiry_date} {isNearExp && "⚠️ Segera Berakhir"}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="mono" style={{ fontSize: 12 }}>{c.sip_number}</div>
+                            <div style={{ fontSize: 11, color: isNearExp ? "#ef4444" : "var(--muted)", fontWeight: isNearExp ? 700 : 400 }}>
+                              Exp: {c.sip_expiry_date}
+                            </div>
+                          </td>
+                          <td>
+                            <span className="badge badge-green" style={{ fontSize: 11 }}>
+                              {c.clinical_privilege}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="badge badge-cyan">{c.status}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
         )}
       </main>

@@ -177,7 +177,37 @@ type ClinicUnit struct {
 	OperatingHours string   `json:"operating_hours"`
 }
 
+type ExecutiveMetrics struct {
+	BOR                 float64 `json:"bor"`
+	ALOS                float64 `json:"alos"`
+	TOI                 float64 `json:"toi"`
+	BTO                 float64 `json:"bto"`
+	RevenueBPJS         int64   `json:"revenue_bpjs"`
+	RevenueCash         int64   `json:"revenue_cash"`
+	RevenueInsurance    int64   `json:"revenue_insurance"`
+	AvgWaitAdmissionMin int     `json:"avg_wait_admission_min"`
+	AvgWaitClinicMin    int     `json:"avg_wait_clinic_min"`
+	AvgWaitPharmacyMin  int     `json:"avg_wait_pharmacy_min"`
+	ClaimApprovalRate   float64 `json:"claim_approval_rate"`
+}
+
+type StaffCredential struct {
+	ID                string `json:"id"`
+	FullName          string `json:"full_name"`
+	Role              string `json:"role"`
+	Specialty         string `json:"specialty"`
+	NIP               string `json:"nip"`
+	STRNumber         string `json:"str_number"`
+	STRExpiryDate     string `json:"str_expiry_date"`
+	SIPNumber         string `json:"sip_number"`
+	SIPExpiryDate     string `json:"sip_expiry_date"`
+	ClinicalPrivilege string `json:"clinical_privilege"`
+	Status            string `json:"status"`
+}
+
 type Repository interface {
+	GetExecutiveMetrics(ctx context.Context) (ExecutiveMetrics, error)
+	ListStaffCredentials(ctx context.Context) ([]StaffCredential, error)
 	ListClinics(ctx context.Context) ([]ClinicUnit, error)
 	ListPatients(ctx context.Context, query string) ([]Patient, error)
 	GetPatient(ctx context.Context, id string) (Patient, bool, error)

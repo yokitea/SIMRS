@@ -82,6 +82,8 @@ func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 	farH, _ := auth.HashPassword("farmasi123")
 	kasH, _ := auth.HashPassword("kasir123")
 	admisiH, _ := auth.HashPassword("admisi123")
+	direksiH, _ := auth.HashPassword("direksi123")
+	hrdH, _ := auth.HashPassword("hrd123")
 
 	s := &Server{
 		cfg:     cfg,
@@ -99,6 +101,8 @@ func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 			"farmasi":      {Username: "farmasi", Role: "FARMASI", FullName: "apt. Nadia Putri, S.Farm", Hash: farH, Unit: "Farmasi Rawat Jalan", NIP: "199104122014022006", Active: true},
 			"kasir":        {Username: "kasir", Role: "KASIR", FullName: "Rian Santoso, S.E", Hash: kasH, Unit: "Kasir & BPJS Lt. 1", NIP: "199308192017011007", Active: true},
 			"admisi":       {Username: "admisi", Role: "ADMISI", FullName: "Dewi Lestari, A.Md", Hash: admisiH, Unit: "Admisi & Registrasi", NIP: "199502102018042008", Active: true},
+			"direksi":      {Username: "direksi", Role: "DIREKSI", FullName: "dr. Budi Rahardjo, MARS", Hash: direksiH, Unit: "Direksi & Manajemen Eksekutif", NIP: "197509122000031001", Active: true},
+			"hrd":          {Username: "hrd", Role: "HRD", FullName: "Siti Rahmawati, S.Psi", Hash: hrdH, Unit: "Bagian SDM & Kredensial Medis", NIP: "199008252016022004", Active: true},
 		},
 		mux: http.NewServeMux(),
 	}
@@ -165,6 +169,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/users/{username}/toggle", anyAuth(s.handleToggleUserStatus))
 	s.mux.HandleFunc("GET /api/v1/audit-logs", anyAuth(s.handleListAudits))
 	s.mux.HandleFunc("POST /api/v1/satusehat/test-oauth", adminOnly(s.handleTestSatusehatOAuth))
+	s.mux.HandleFunc("GET /api/v1/executive/metrics", anyAuth(s.handleExecutiveMetrics))
+	s.mux.HandleFunc("GET /api/v1/hrd/credentials", anyAuth(s.handleHRDCredentials))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -786,6 +792,24 @@ func (s *Server) handleTestSatusehatOAuth(w http.ResponseWriter, r *http.Request
 		preview = preview[:16] + "..."
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "http_status": code, "token_preview": preview})
+}
+
+func (s *Server) handleExecutiveMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics, err := s.repo.GetExecutiveMetrics(r.Context())
+	if err != nil {
+		writeInternalErr(w, "executive metrics", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"metrics": metrics})
+}
+
+func (s *Server) handleHRDCredentials(w http.ResponseWriter, r *http.Request) {
+	creds, err := s.repo.ListStaffCredentials(r.Context())
+	if err != nil {
+		writeInternalErr(w, "hrd credentials", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"credentials": creds})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
