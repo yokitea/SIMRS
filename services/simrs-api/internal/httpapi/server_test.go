@@ -62,6 +62,20 @@ func TestFullHospitalWorkflowWithRBAC(t *testing.T) {
 	dokterTok := loginSIMRS(t, ts.URL, "dokter", "dokter123")
 	farmasiTok := loginSIMRS(t, ts.URL, "farmasi", "farmasi123")
 
+	// RBAC Security by Default: dokter cannot access user IAM (403)
+	resp = doAuthJSON(t, http.MethodGet, ts.URL+"/api/v1/users", dokterTok, nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for dokter accessing IAM users, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// RBAC: farmasi cannot access billing (403)
+	resp = doAuthJSON(t, http.MethodGet, ts.URL+"/api/v1/billing", farmasiTok, nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for farmasi accessing billing, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
 	// 1. Register new patient (also verify short client-supplied "id":"x" is ignored & does not panic)
 	patBody := []byte(`{"id":"x","full_name":"Rina Marlina","nik":"3171099988770001","bpjs_number":"0009998887771","birth_date":"1992-07-10","sex":"F"}`)
 	resp = doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/patients", adminTok, patBody)

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AuditLogItem,
   authHeaders,
@@ -26,6 +26,8 @@ import {
   StaffCredential,
   WorkstationType,
   WORKSTATIONS,
+  getAllowedWorkstations,
+  getDefaultWorkstation,
 } from "@/lib/api";
 
 const DEFAULT_CLINICS: ClinicUnit[] = [
@@ -271,18 +273,68 @@ export default function SIMRSConsolePage() {
     notify("Audit trail berhasil diexport ke CSV");
   };
 
+  const allowedWorkstations = useMemo(() => getAllowedWorkstations(userRole), [userRole]);
+
+  const switchWorkstation = useCallback(
+    (ws: WorkstationType) => {
+      setActiveWorkstation(ws);
+      localStorage.setItem("simrs_ws", ws);
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("ws", ws.toLowerCase());
+        window.history.replaceState(null, "", url.toString());
+      }
+      if (ws === "CLINIC") setTab("rme");
+      else if (ws === "PHARMACY") setTab("farmasi");
+      else if (ws === "BILLING") setTab("kasir");
+      else if (ws === "ADMISSION") setTab("admisi");
+      else if (ws === "RANAP") setTab("ranap");
+      else if (ws === "EXECUTIVE") setTab("executive");
+      else if (ws === "HRD") setTab("hrd");
+      else if (ws === "ADMIN") setTab("admin");
+      notify(`Workstation beralih ke: ${WORKSTATIONS[ws]?.title}`);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
   useEffect(() => {
     const saved = getToken();
     if (saved) {
       setToken(saved);
       const r = localStorage.getItem("simrs_role") || "ADMIN";
       const u = localStorage.getItem("simrs_unit") || "";
-      const ws = (localStorage.getItem("simrs_ws") as WorkstationType) || "CLINIC";
       const lbl = localStorage.getItem("simrs_user_label") || "";
       setUserRole(r);
       setUserUnit(u);
-      setActiveWorkstation(ws);
       if (lbl) setUserLabel(lbl);
+
+      const allowed = getAllowedWorkstations(r);
+      let targetWs: WorkstationType = "CLINIC";
+      if (typeof window !== "undefined") {
+        const paramWs = new URLSearchParams(window.location.search).get("ws")?.toUpperCase() as WorkstationType;
+        if (paramWs && allowed.includes(paramWs)) {
+          targetWs = paramWs;
+        } else {
+          const def = getDefaultWorkstation(r, u);
+          targetWs = def.ws;
+          if (def.defaultPoli) {
+            setPoliFilter(def.defaultPoli);
+            setRmePoliFilter(def.defaultPoli);
+          }
+        }
+      }
+      setActiveWorkstation(targetWs);
+      localStorage.setItem("simrs_ws", targetWs);
+
+      if (targetWs === "CLINIC") setTab("rme");
+      else if (targetWs === "PHARMACY") setTab("farmasi");
+      else if (targetWs === "BILLING") setTab("kasir");
+      else if (targetWs === "ADMISSION") setTab("admisi");
+      else if (targetWs === "RANAP") setTab("ranap");
+      else if (targetWs === "EXECUTIVE") setTab("executive");
+      else if (targetWs === "HRD") setTab("hrd");
+      else if (targetWs === "ADMIN") setTab("admin");
     }
   }, []);
 
@@ -325,56 +377,20 @@ export default function SIMRSConsolePage() {
       localStorage.setItem("simrs_user_label", lbl);
 
       // Dynamic Workstation Routing Gate
-      let targetWs: WorkstationType = "CLINIC";
-      let targetTab: Tab = "rme";
-      if (role === "DOKTER") {
-        targetWs = "CLINIC";
-        targetTab = "rme";
-        if (unit.toLowerCase().includes("gigi")) {
-          setPoliFilter("Poli Gigi & Mulut");
-          setRmePoliFilter("Poli Gigi & Mulut");
-        } else if (unit.toLowerCase().includes("saraf")) {
-          setPoliFilter("Poli Saraf");
-          setRmePoliFilter("Poli Saraf");
-        } else if (unit.toLowerCase().includes("anak")) {
-          setPoliFilter("Poli Anak");
-          setRmePoliFilter("Poli Anak");
-        } else if (unit.toLowerCase().includes("umum")) {
-          setPoliFilter("Poli Umum");
-          setRmePoliFilter("Poli Umum");
-        } else if (unit.toLowerCase().includes("penyakit dalam")) {
-          setPoliFilter("Poli Penyakit Dalam");
-          setRmePoliFilter("Poli Penyakit Dalam");
-        } else {
-          setPoliFilter("ALL");
-          setRmePoliFilter("ALL");
-        }
-      } else if (role === "FARMASI") {
-        targetWs = "PHARMACY";
-        targetTab = "farmasi";
-      } else if (role === "KASIR") {
-        targetWs = "BILLING";
-        targetTab = "kasir";
-      } else if (role === "ADMISI") {
-        targetWs = "ADMISSION";
-        targetTab = "admisi";
-      } else if (role === "PERAWAT") {
-        targetWs = "RANAP";
-        targetTab = "ranap";
-      } else if (role === "DIREKSI") {
-        targetWs = "EXECUTIVE";
-        targetTab = "executive";
-      } else if (role === "HRD") {
-        targetWs = "HRD";
-        targetTab = "hrd";
-      } else if (role === "ADMIN") {
-        targetWs = "ADMIN";
-        targetTab = "admin";
+      const def = getDefaultWorkstation(role, unit);
+      setActiveWorkstation(def.ws);
+      setTab(def.tab as Tab);
+      if (def.defaultPoli) {
+        setPoliFilter(def.defaultPoli);
+        setRmePoliFilter(def.defaultPoli);
       }
-      setActiveWorkstation(targetWs);
-      setTab(targetTab);
-      localStorage.setItem("simrs_ws", targetWs);
-      notify(`Login Berhasil: Mengarahkan ke ${WORKSTATIONS[targetWs]?.title || targetWs}`);
+      localStorage.setItem("simrs_ws", def.ws);
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("ws", def.ws.toLowerCase());
+        window.history.replaceState(null, "", url.toString());
+      }
+      notify(`Login Berhasil: Mengarahkan ke ${WORKSTATIONS[def.ws]?.title || def.ws}`);
     } catch {
       setLoginErr("Tidak dapat terhubung ke SIMRS API");
     }
@@ -390,6 +406,11 @@ export default function SIMRSConsolePage() {
     setUserLabel("");
     setUserRole("ADMIN");
     setUserUnit("");
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("ws");
+      window.history.replaceState(null, "", url.toString());
+    }
   };
 
   const activeVisit = visits.find((v) => v.id === activeVisitId) || null;
@@ -762,47 +783,52 @@ export default function SIMRSConsolePage() {
           </div>
         </div>
 
-        {/* Workstation Context Switcher */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>🔀 Ganti Workstation:</span>
-          <select
-            className="input"
+        {/* Workstation Context Switcher / Role-Locked Badge */}
+        {allowedWorkstations.length > 1 ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>🔀 Ganti Workstation:</span>
+            <select
+              className="input"
+              style={{
+                padding: "4px 10px",
+                fontSize: 12,
+                minWidth: 220,
+                cursor: "pointer",
+                borderColor: "rgba(56, 189, 248, 0.4)",
+                background: "rgba(15, 23, 42, 0.8)",
+                color: "#38bdf8",
+                fontWeight: 600,
+              }}
+              value={activeWorkstation}
+              onChange={(e) => switchWorkstation(e.target.value as WorkstationType)}
+            >
+              {allowedWorkstations.map((wsKey) => (
+                <option key={wsKey} value={wsKey}>
+                  {WORKSTATIONS[wsKey]?.icon} {WORKSTATIONS[wsKey]?.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div
             style={{
-              padding: "4px 10px",
-              fontSize: 12,
-              minWidth: 220,
-              cursor: "pointer",
-              borderColor: "rgba(56, 189, 248, 0.4)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
               background: "rgba(15, 23, 42, 0.8)",
-              color: "#38bdf8",
-              fontWeight: 600,
+              border: "1px solid rgba(56, 189, 248, 0.25)",
+              padding: "5px 12px",
+              borderRadius: 6,
+              fontSize: 11,
+              color: "#94a3b8",
             }}
-            value={activeWorkstation}
-            onChange={(e) => {
-              const ws = e.target.value as WorkstationType;
-              setActiveWorkstation(ws);
-              localStorage.setItem("simrs_ws", ws);
-              if (ws === "CLINIC") setTab("rme");
-              else if (ws === "PHARMACY") setTab("farmasi");
-              else if (ws === "BILLING") setTab("kasir");
-              else if (ws === "ADMISSION") setTab("admisi");
-              else if (ws === "RANAP") setTab("ranap");
-              else if (ws === "EXECUTIVE") setTab("executive");
-              else if (ws === "HRD") setTab("hrd");
-              else if (ws === "ADMIN") setTab("admin");
-              notify(`Workstation beralih ke: ${WORKSTATIONS[ws]?.title}`);
-            }}
+            title="Akses dikunci secara otomatis sesuai peran klinis (UU PDP No. 27/2022 & Need-to-Know Principle)"
           >
-            <option value="CLINIC">🩺 Workstation Dokter & Poliklinik</option>
-            <option value="PHARMACY">💊 Workstation Farmasi & Apotek</option>
-            <option value="BILLING">💳 Workstation Kasir & Keuangan</option>
-            <option value="ADMISSION">📋 Workstation Admisi & Registrasi</option>
-            <option value="RANAP">🛏️ Workstation Rawat Inap & Bangsal</option>
-            <option value="EXECUTIVE">📊 Executive Command Center (Direksi)</option>
-            <option value="HRD">👥 Workstation SDM & Kredensial Medis</option>
-            <option value="ADMIN">🔐 Workstation Admin IT & IAM</option>
-          </select>
-        </div>
+            <span>🔒</span>
+            <span style={{ color: "#38bdf8", fontWeight: 600 }}>Workstation Terkunci:</span>
+            <span>{WORKSTATIONS[activeWorkstation]?.title}</span>
+          </div>
+        )}
       </div>
 
       {toast && (

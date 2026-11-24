@@ -115,6 +115,29 @@ func (s *Server) Handler() http.Handler {
 	return auth.SecurityHeaders(s.mux)
 }
 
+func allowedWorkstationsForRole(role string) []string {
+	switch strings.ToUpper(strings.TrimSpace(role)) {
+	case "ADMIN":
+		return []string{"CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "ADMIN"}
+	case "DOKTER":
+		return []string{"CLINIC", "RANAP"}
+	case "FARMASI":
+		return []string{"PHARMACY"}
+	case "KASIR":
+		return []string{"BILLING"}
+	case "ADMISI":
+		return []string{"ADMISSION"}
+	case "PERAWAT":
+		return []string{"RANAP"}
+	case "DIREKSI":
+		return []string{"EXECUTIVE", "RANAP"}
+	case "HRD":
+		return []string{"HRD"}
+	default:
+		return []string{"CLINIC"}
+	}
+}
+
 func (s *Server) routes() {
 	anyAuth := func(h http.HandlerFunc) http.HandlerFunc {
 		return auth.RequireAuth(s.cfg.JWTSecret, nil, h)
@@ -134,6 +157,12 @@ func (s *Server) routes() {
 	kasirAuth := func(h http.HandlerFunc) http.HandlerFunc {
 		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "KASIR"}, h)
 	}
+	clinicalAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "DOKTER", "PERAWAT"}, h)
+	}
+	billingViewAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "KASIR", "DIREKSI"}, h)
+	}
 
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
@@ -146,7 +175,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/visits", anyAuth(s.handleListVisits))
 	s.mux.HandleFunc("POST /api/v1/visits", admisiAuth(s.handleCreateVisit))
 	s.mux.HandleFunc("POST /api/v1/visits/{id}/sep", kasirAuth(s.handleGenerateSEP))
-	s.mux.HandleFunc("GET /api/v1/visits/{id}/soap", anyAuth(s.handleListSOAP))
+	s.mux.HandleFunc("GET /api/v1/visits/{id}/soap", clinicalAuth(s.handleListSOAP))
 	s.mux.HandleFunc("POST /api/v1/visits/{id}/soap", dokterAuth(s.handleCreateSOAP))
 	s.mux.HandleFunc("POST /api/v1/visits/{id}/radiology-orders", dokterAuth(s.handleCreateRadiologyOrder))
 	s.mux.HandleFunc("POST /api/v1/visits/{id}/prescriptions", dokterAuth(s.handleCreatePrescription))
@@ -162,11 +191,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/prescriptions", anyAuth(s.handleListPrescriptions))
 	s.mux.HandleFunc("POST /api/v1/prescriptions/{id}/dispense", farmasiAuth(s.handleDispensePrescription))
 
-	s.mux.HandleFunc("GET /api/v1/billing", anyAuth(s.handleListBilling))
+	s.mux.HandleFunc("GET /api/v1/billing", billingViewAuth(s.handleListBilling))
 	s.mux.HandleFunc("GET /api/v1/outbox", anyAuth(s.handleListOutbox))
-	s.mux.HandleFunc("GET /api/v1/users", anyAuth(s.handleListUsers))
-	s.mux.HandleFunc("POST /api/v1/users", anyAuth(s.handleCreateUser))
-	s.mux.HandleFunc("POST /api/v1/users/{username}/toggle", anyAuth(s.handleToggleUserStatus))
+	s.mux.HandleFunc("GET /api/v1/users", adminOnly(s.handleListUsers))
+	s.mux.HandleFunc("POST /api/v1/users", adminOnly(s.handleCreateUser))
+	s.mux.HandleFunc("POST /api/v1/users/{username}/toggle", adminOnly(s.handleToggleUserStatus))
 	s.mux.HandleFunc("GET /api/v1/audit-logs", anyAuth(s.handleListAudits))
 	s.mux.HandleFunc("POST /api/v1/satusehat/test-oauth", adminOnly(s.handleTestSatusehatOAuth))
 	s.mux.HandleFunc("GET /api/v1/executive/metrics", anyAuth(s.handleExecutiveMetrics))
@@ -206,20 +235,31 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "akun pengguna dinonaktifkan (suspended)"})
 		return
 	}
+	allowedWs := allowedWorkstationsForRole(u.Role)
 	tok, err := auth.SignJWT(s.cfg.JWTSecret, auth.Claims{
-		Sub:  req.Username,
-		Role: u.Role,
-		Name: u.FullName,
-		Exp:  time.Now().Add(12 * time.Hour).Unix(),
+		Sub:          req.Username,
+		Role:         u.Role,
+		Name:         u.FullName,
+		Unit:         u.Unit,
+		NIP:          u.NIP,
+		Workstations: allowedWs,
+		Exp:          time.Now().Add(12 * time.Hour).Unix(),
 	})
 	if err != nil {
 		writeInternalErr(w, "sign jwt", err)
 		return
 	}
-	_ = s.repo.AppendAudit(r.Context(), req.Username, "LOGIN", "AUTH", req.Username, "SIMRS Web Login ("+u.Role+")")
+	_ = s.repo.AppendAudit(r.Context(), req.Username, "LOGIN", "AUTH", req.Username, fmt.Sprintf("SIMRS Web Login (%s - %s)", u.Role, u.Unit))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": tok,
-		"user":  map[string]string{"username": req.Username, "role": u.Role, "full_name": u.FullName, "unit": u.Unit},
+		"user": map[string]any{
+			"username":     req.Username,
+			"role":         u.Role,
+			"full_name":    u.FullName,
+			"unit":         u.Unit,
+			"nip":          u.NIP,
+			"workstations": allowedWs,
+		},
 	})
 }
 

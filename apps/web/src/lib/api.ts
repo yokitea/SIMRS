@@ -336,3 +336,40 @@ export const WORKSTATIONS: Record<WorkstationType, WorkstationMeta> = {
     allowedRoles: ["ADMIN"],
   },
 };
+
+export function getAllowedWorkstations(role: string): WorkstationType[] {
+  const r = (role || "").toUpperCase();
+  if (r === "ADMIN") {
+    return ["CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "ADMIN"];
+  }
+  return (Object.keys(WORKSTATIONS) as WorkstationType[]).filter((key) =>
+    WORKSTATIONS[key].allowedRoles.includes(r)
+  );
+}
+
+export function getDefaultWorkstation(
+  role: string,
+  unit: string
+): { ws: WorkstationType; tab: string; defaultPoli?: string } {
+  const r = (role || "").toUpperCase();
+  const u = (unit || "").toLowerCase();
+  if (r === "DOKTER") {
+    let poli = "ALL";
+    if (u.includes("gigi")) poli = "Poli Gigi & Mulut";
+    else if (u.includes("saraf")) poli = "Poli Saraf";
+    else if (u.includes("anak")) poli = "Poli Anak";
+    else if (u.includes("umum")) poli = "Poli Umum";
+    else if (u.includes("penyakit dalam")) poli = "Poli Penyakit Dalam";
+    else if (u.includes("jantung")) poli = "Poli Jantung & Pembuluh Darah";
+    else if (u.includes("mata")) poli = "Poli Mata";
+    return { ws: "CLINIC", tab: "rme", defaultPoli: poli };
+  }
+  if (r === "FARMASI") return { ws: "PHARMACY", tab: "farmasi" };
+  if (r === "KASIR") return { ws: "BILLING", tab: "kasir" };
+  if (r === "ADMISI") return { ws: "ADMISSION", tab: "admisi" };
+  if (r === "PERAWAT") return { ws: "RANAP", tab: "ranap" };
+  if (r === "DIREKSI") return { ws: "EXECUTIVE", tab: "executive" };
+  if (r === "HRD") return { ws: "HRD", tab: "hrd" };
+  return { ws: "ADMIN", tab: "admin" };
+}
+
