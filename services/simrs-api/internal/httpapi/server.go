@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,15 +32,20 @@ type Config struct {
 }
 
 type localUser struct {
-	Role     string
-	FullName string
-	Hash     string
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	FullName string `json:"full_name"`
+	Hash     string `json:"-"`
+	Unit     string `json:"unit"`
+	NIP      string `json:"nip"`
+	Active   bool   `json:"active"`
 }
 
 type Server struct {
 	cfg     Config
 	repo    simrsstore.Repository
 	loginRL *auth.RateLimiter
+	usersMu sync.RWMutex
 	users   map[string]localUser
 	sepSeq  atomic.Int64
 	mux     *http.ServeMux
@@ -66,18 +73,32 @@ func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 
 	adminH, _ := auth.HashPassword("admin123")
 	dokH, _ := auth.HashPassword("dokter123")
+	dokAnakH, _ := auth.HashPassword("dokter123")
+	dokGigiH, _ := auth.HashPassword("dokter123")
+	dokSarafH, _ := auth.HashPassword("dokter123")
+	dokUmumH, _ := auth.HashPassword("dokter123")
+	radH, _ := auth.HashPassword("rad123")
+	perawatH, _ := auth.HashPassword("perawat123")
 	farH, _ := auth.HashPassword("farmasi123")
 	kasH, _ := auth.HashPassword("kasir123")
+	admisiH, _ := auth.HashPassword("admisi123")
 
 	s := &Server{
 		cfg:     cfg,
 		repo:    repo,
 		loginRL: auth.NewRateLimiter(10, time.Minute),
 		users: map[string]localUser{
-			"admin":   {Role: "ADMIN", FullName: "Administrator SIMRS", Hash: adminH},
-			"dokter":  {Role: "DOKTER", FullName: "dr. Hendra Wijaya, Sp.PD", Hash: dokH},
-			"farmasi": {Role: "FARMASI", FullName: "apt. Nadia Putri, S.Farm", Hash: farH},
-			"kasir":   {Role: "KASIR", FullName: "Petugas Kasir & Klaim BPJS", Hash: kasH},
+			"admin":        {Username: "admin", Role: "ADMIN", FullName: "Administrator IT SIMRS", Hash: adminH, Unit: "Instalasi TI & SIMRS", NIP: "198801152010121001", Active: true},
+			"dokter":       {Username: "dokter", Role: "DOKTER", FullName: "dr. Hendra Wijaya, Sp.PD", Hash: dokH, Unit: "Poli Penyakit Dalam", NIP: "198003152006041002", Active: true},
+			"dokter_anak":  {Username: "dokter_anak", Role: "DOKTER", FullName: "dr. Siti Nurhaliza, Sp.A", Hash: dokAnakH, Unit: "Poli Anak", NIP: "198507202011012003", Active: true},
+			"dokter_gigi":  {Username: "dokter_gigi", Role: "DOKTER", FullName: "drg. Maya Indah, Sp.KG", Hash: dokGigiH, Unit: "Poli Gigi & Mulut", NIP: "198904122014022005", Active: true},
+			"dokter_saraf": {Username: "dokter_saraf", Role: "DOKTER", FullName: "dr. Farhan Malik, Sp.S", Hash: dokSarafH, Unit: "Poli Saraf", NIP: "198302182009031004", Active: true},
+			"dokter_umum":  {Username: "dokter_umum", Role: "DOKTER", FullName: "dr. Ahmad Fauzi", Hash: dokUmumH, Unit: "Poli Umum", NIP: "199406202020121006", Active: true},
+			"radiolog":     {Username: "radiolog", Role: "DOKTER", FullName: "dr. Kartika Putri, Sp.Rad", Hash: radH, Unit: "Instalasi Radiologi", NIP: "198711042012122004", Active: true},
+			"perawat":      {Username: "perawat", Role: "PERAWAT", FullName: "Ns. Andi Pratama, S.Kep", Hash: perawatH, Unit: "Rawat Inap Pav. Anggrek", NIP: "199205102015031005", Active: true},
+			"farmasi":      {Username: "farmasi", Role: "FARMASI", FullName: "apt. Nadia Putri, S.Farm", Hash: farH, Unit: "Farmasi Rawat Jalan", NIP: "199104122014022006", Active: true},
+			"kasir":        {Username: "kasir", Role: "KASIR", FullName: "Rian Santoso, S.E", Hash: kasH, Unit: "Kasir & BPJS Lt. 1", NIP: "199308192017011007", Active: true},
+			"admisi":       {Username: "admisi", Role: "ADMISI", FullName: "Dewi Lestari, A.Md", Hash: admisiH, Unit: "Admisi & Registrasi", NIP: "199502102018042008", Active: true},
 		},
 		mux: http.NewServeMux(),
 	}
@@ -113,6 +134,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("GET /api/v1/dashboard", anyAuth(s.handleDashboard))
+	s.mux.HandleFunc("GET /api/v1/clinics", anyAuth(s.handleListClinics))
 
 	s.mux.HandleFunc("GET /api/v1/patients", anyAuth(s.handleListPatients))
 	s.mux.HandleFunc("POST /api/v1/patients", admisiAuth(s.handleCreatePatient))
@@ -138,7 +160,10 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/v1/billing", anyAuth(s.handleListBilling))
 	s.mux.HandleFunc("GET /api/v1/outbox", anyAuth(s.handleListOutbox))
-	s.mux.HandleFunc("GET /api/v1/audit-logs", adminOnly(s.handleListAudits))
+	s.mux.HandleFunc("GET /api/v1/users", anyAuth(s.handleListUsers))
+	s.mux.HandleFunc("POST /api/v1/users", anyAuth(s.handleCreateUser))
+	s.mux.HandleFunc("POST /api/v1/users/{username}/toggle", anyAuth(s.handleToggleUserStatus))
+	s.mux.HandleFunc("GET /api/v1/audit-logs", anyAuth(s.handleListAudits))
 	s.mux.HandleFunc("POST /api/v1/satusehat/test-oauth", adminOnly(s.handleTestSatusehatOAuth))
 }
 
@@ -164,9 +189,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	s.usersMu.RLock()
 	u, ok := s.users[strings.TrimSpace(req.Username)]
+	s.usersMu.RUnlock()
 	if !ok || !auth.VerifyPassword(u.Hash, req.Password) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	if !u.Active {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "akun pengguna dinonaktifkan (suspended)"})
 		return
 	}
 	tok, err := auth.SignJWT(s.cfg.JWTSecret, auth.Claims{
@@ -179,10 +210,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeInternalErr(w, "sign jwt", err)
 		return
 	}
-	_ = s.repo.AppendAudit(r.Context(), req.Username, "LOGIN", "AUTH", req.Username, "SIMRS Web Login")
+	_ = s.repo.AppendAudit(r.Context(), req.Username, "LOGIN", "AUTH", req.Username, "SIMRS Web Login ("+u.Role+")")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": tok,
-		"user":  map[string]string{"username": req.Username, "role": u.Role, "full_name": u.FullName},
+		"user":  map[string]string{"username": req.Username, "role": u.Role, "full_name": u.FullName, "unit": u.Unit},
 	})
 }
 
@@ -202,6 +233,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"satusehat_env":   s.cfg.SatusehatEnv,
 		},
 	})
+}
+
+func (s *Server) handleListClinics(w http.ResponseWriter, r *http.Request) {
+	list, err := s.repo.ListClinics(r.Context())
+	if err != nil {
+		writeInternalErr(w, "list clinics", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"clinics": list})
 }
 
 func (s *Server) handleListPatients(w http.ResponseWriter, r *http.Request) {
@@ -321,11 +361,13 @@ func (s *Server) handleGenerateSEP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListSOAP(w http.ResponseWriter, r *http.Request) {
-	list, err := s.repo.ListSOAPNotes(r.Context(), r.PathValue("id"))
+	visitID := r.PathValue("id")
+	list, err := s.repo.ListSOAPNotes(r.Context(), visitID)
 	if err != nil {
 		writeInternalErr(w, "list soap", err)
 		return
 	}
+	_ = s.repo.AppendAudit(r.Context(), auth.ActorFromRequest(r), "VIEW_RME", "SOAP_NOTE", visitID, "Inspeksi rekam medis pasien")
 	writeJSON(w, http.StatusOK, map[string]any{"soap_notes": list})
 }
 
@@ -398,6 +440,7 @@ func (s *Server) handleRadiologyViewerURL(w http.ResponseWriter, r *http.Request
 	}
 	base := strings.TrimRight(s.cfg.PACSViewerURL, "/")
 	launchURL := fmt.Sprintf("%s?StudyInstanceUID=%s&accession=%s&token=%s", base, ord.StudyInstanceUID, ord.AccessionNumber, tok)
+	_ = s.repo.AppendAudit(r.Context(), actor, "LAUNCH_PACS", "PACS_VIEWER", ord.AccessionNumber, "Membuka citra diagnostik DICOM "+ord.ProcedureName)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"viewer_url":         launchURL,
 		"study_instance_uid": ord.StudyInstanceUID,
@@ -629,8 +672,93 @@ func (s *Server) handleListOutbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"outbox": list})
 }
 
+func (s *Server) handleListUsers(w http.ResponseWriter, _ *http.Request) {
+	s.usersMu.RLock()
+	defer s.usersMu.RUnlock()
+	list := make([]localUser, 0, len(s.users))
+	for _, u := range s.users {
+		list = append(list, localUser{
+			Username: u.Username,
+			Role:     u.Role,
+			FullName: u.FullName,
+			Unit:     u.Unit,
+			NIP:      u.NIP,
+			Active:   u.Active,
+		})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Username < list[j].Username
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"users": list})
+}
+
+func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+		FullName string `json:"full_name"`
+		Unit     string `json:"unit"`
+		NIP      string `json:"nip"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	req.Username = strings.ToLower(strings.TrimSpace(req.Username))
+	if req.Username == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username dan password wajib diisi"})
+		return
+	}
+	if req.Role == "" {
+		req.Role = "DOKTER"
+	}
+	h, err := auth.HashPassword(req.Password)
+	if err != nil {
+		writeInternalErr(w, "hash pw", err)
+		return
+	}
+	u := localUser{
+		Username: req.Username,
+		Role:     strings.ToUpper(req.Role),
+		FullName: req.FullName,
+		Hash:     h,
+		Unit:     req.Unit,
+		NIP:      req.NIP,
+		Active:   true,
+	}
+	s.usersMu.Lock()
+	s.users[req.Username] = u
+	s.usersMu.Unlock()
+
+	_ = s.repo.AppendAudit(r.Context(), auth.ActorFromRequest(r), "CREATE_USER", "IAM", req.Username, fmt.Sprintf("Akun baru: %s (%s - %s)", req.FullName, req.Role, req.Unit))
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "user": u})
+}
+
+func (s *Server) handleToggleUserStatus(w http.ResponseWriter, r *http.Request) {
+	un := strings.ToLower(strings.TrimSpace(r.PathValue("username")))
+	s.usersMu.Lock()
+	u, ok := s.users[un]
+	if !ok {
+		s.usersMu.Unlock()
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	u.Active = !u.Active
+	s.users[un] = u
+	s.usersMu.Unlock()
+
+	statusStr := "AKTIF"
+	if !u.Active {
+		statusStr = "DITANGGUHKAN (SUSPENDED)"
+	}
+	_ = s.repo.AppendAudit(r.Context(), auth.ActorFromRequest(r), "TOGGLE_USER_STATUS", "IAM", un, "Status akun diubah menjadi: "+statusStr)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": un, "active": u.Active})
+}
+
 func (s *Server) handleListAudits(w http.ResponseWriter, r *http.Request) {
-	list, err := s.repo.ListAudits(r.Context(), 50)
+	limit := 100
+	list, err := s.repo.ListAudits(r.Context(), limit)
 	if err != nil {
 		writeInternalErr(w, "list audits", err)
 		return

@@ -1,5 +1,5 @@
 export const SIMRS_API_URL =
-  process.env.NEXT_PUBLIC_SIMRS_API_URL || "http://localhost:8090";
+  process.env.NEXT_PUBLIC_SIMRS_API_URL || "";
 
 export const PACS_VIEWER_URL =
   process.env.NEXT_PUBLIC_PACS_VIEWER_URL || "http://localhost:3001/viewer";
@@ -25,6 +25,7 @@ export interface Patient {
   birth_date: string;
   sex: string;
   phone: string;
+  mother_name?: string;
   address: string;
 }
 
@@ -46,6 +47,18 @@ export interface Visit {
   inacbg_tariff?: number;
   status: string;
   satusehat_encounter_id: string;
+}
+
+export interface ClinicUnit {
+  code: string;
+  name: string;
+  specialty: string;
+  bpjs_poli_code: string;
+  room_number: string;
+  floor: string;
+  default_doctor: string;
+  doctor_list: string[];
+  operating_hours: string;
 }
 
 export interface Bed {
@@ -176,6 +189,25 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
     ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
     ...(extra || {}),
   };
+}
+
+export interface UserItem {
+  username: string;
+  role: string;
+  full_name: string;
+  unit: string;
+  nip: string;
+  active: boolean;
+}
+
+export interface AuditLogItem {
+  id: number;
+  actor: string;
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  detail: string;
+  created_at: string;
 }
 
 export function formatIDR(n: number): string {

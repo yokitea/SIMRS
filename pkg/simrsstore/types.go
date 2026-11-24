@@ -15,6 +15,7 @@ type Patient struct {
 	BirthDate  string    `json:"birth_date"`
 	Sex        string    `json:"sex"`
 	Phone      string    `json:"phone"`
+	MotherName string    `json:"mother_name"`
 	Address    string    `json:"address"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -164,7 +165,20 @@ type DashboardStats struct {
 	OutboxCount     int   `json:"outbox_count"`
 }
 
+type ClinicUnit struct {
+	Code           string   `json:"code"`
+	Name           string   `json:"name"`
+	Specialty      string   `json:"specialty"`
+	BPJSPoliCode   string   `json:"bpjs_poli_code"`
+	RoomNumber     string   `json:"room_number"`
+	Floor          string   `json:"floor"`
+	DefaultDoctor  string   `json:"default_doctor"`
+	DoctorList     []string `json:"doctor_list"`
+	OperatingHours string   `json:"operating_hours"`
+}
+
 type Repository interface {
+	ListClinics(ctx context.Context) ([]ClinicUnit, error)
 	ListPatients(ctx context.Context, query string) ([]Patient, error)
 	GetPatient(ctx context.Context, id string) (Patient, bool, error)
 	CreatePatient(ctx context.Context, p Patient) (Patient, error)

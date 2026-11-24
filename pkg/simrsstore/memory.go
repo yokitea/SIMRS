@@ -25,6 +25,7 @@ type MemoryStore struct {
 	billing       map[string][]*BillingItem
 	outbox        []OutboxItem
 	audits        []AuditLog
+	clinics       []ClinicUnit
 	seq           int64
 	auditSeq      int64
 }
@@ -38,6 +39,7 @@ func NewMemoryStore() *MemoryStore {
 		medications:   make(map[string]*Medication),
 		prescriptions: make(map[string]*Prescription),
 		billing:       make(map[string][]*BillingItem),
+		clinics:       DefaultClinics(),
 	}
 	m.seedDefaults()
 	return m
@@ -79,83 +81,387 @@ func (m *MemoryStore) seedDefaults() {
 		m.medications[med.ID] = &cp
 	}
 
-	// 3. Seed 4 Sample Patients & Visits (RJ, IGD, RI) aligned with PACS demo StudyUIDs!
-	p1 := &Patient{ID: uuid.NewString(), NoRM: "RM-001024", NIK: "3171011405780001", BPJSNumber: "0001234500101", IHSNumber: "P10002001", FullName: "Budi Santoso", BirthDate: "1978-05-14", Sex: "M", Phone: "081234567801", Address: "Jl. Sudirman No. 12, Jakarta", CreatedAt: now}
-	p2 := &Patient{ID: uuid.NewString(), NoRM: "RM-001089", NIK: "3171022209910002", BPJSNumber: "0001234500102", IHSNumber: "P10002002", FullName: "Siti Rahmawati", BirthDate: "1991-09-22", Sex: "F", Phone: "081234567802", Address: "Jl. Gatot Subroto No. 45, Jakarta", CreatedAt: now}
-	p3 := &Patient{ID: uuid.NewString(), NoRM: "RM-001142", NIK: "3273010803650003", BPJSNumber: "", IHSNumber: "P10002003", FullName: "Ahmad Fauzi", BirthDate: "1965-03-08", Sex: "M", Phone: "081234567803", Address: "Jl. Diponegoro No. 8, Bandung", CreatedAt: now}
-	p4 := &Patient{ID: uuid.NewString(), NoRM: "RM-001205", NIK: "3174053011860004", BPJSNumber: "0001234500104", IHSNumber: "P10002004", FullName: "Dewi Lestari", BirthDate: "1986-11-30", Sex: "F", Phone: "081234567804", Address: "Jl. Ahmad Yani No. 19, Surabaya", CreatedAt: now}
-	for _, p := range []*Patient{p1, p2, p3, p4} {
+	// 3. Seed 10 Complete Sample Patients & Visits aligned with RIS & PACS demo studies
+	type seedPat struct {
+		NoRM, NIK, BPJS, IHS, FullName, DOB, Sex, Phone, MotherName, Address string
+		VisitNum, Unit, Doctor, Pay, SEP, INACBG, Service, Bed               string
+		DiagCode, DiagName, SOAPSubj, SOAPObj, SOAPAssess, SOAPPlan          string
+		AccNum, StudyUID, Modality, ProcCode, ProcName, RadNote              string
+		RadStatus, RptStatus, RadText                                        string
+		MedID, MedName, KFA, Dosage                                          string
+		Price                                                                int64
+	}
+
+	samples := []seedPat{
+		{
+			NoRM: "RM-2026-001", NIK: "3171011204850001", BPJS: "0001234500101", IHS: "P0123456001",
+			FullName: "Tn. Budi Santoso", DOB: "1985-04-12", Sex: "M", Phone: "081234567801", MotherName: "Siti Aminah", Address: "Jl. Sudirman No. 12, Jakarta",
+			VisitNum: "VIS-" + today + "-0001", Unit: "Poli Penyakit Dalam", Doctor: "dr. Hendra Wijaya, Sp.PD",
+			Pay: "BPJS", SEP: "0112R0011126V000101", INACBG: "Q-5-44-0", Service: "RJ",
+			DiagCode: "J18.9", DiagName: "Pneumonia, unspecified",
+			SOAPSubj:   "Batuk kronis > 2 minggu, sedikit sesak saat aktivitas berat.",
+			SOAPObj:    "KU sedang, CM. Ronki halus basal paru kanan (+), Wheezing (-). SpO2 97%.",
+			SOAPAssess: "Suspek Pneumonia Komunitas (CAP) ec bakterial",
+			SOAPPlan:   "Foto Thorax PA, terapi Amoxicillin 500mg 3x1, edukasi istirahat cukup.",
+			AccNum:     "ACC-" + today + "-0001", StudyUID: "1.2.826.0.1.3680043.10.2026.1001", Modality: "DX",
+			ProcCode: "24627-2", ProcName: "Foto Thorax PA", RadNote: "Evaluasi infiltrat paru",
+			RadStatus: "COMPLETED", RptStatus: "FINAL",
+			RadText: "TEMUAN:\nCor tidak membesar (CTR < 50%). Aorta tidak dilatasi.\nPulmo: hilus tidak menebal, corakan normal, tidak tampak infiltrat.\n\nKESAN:\nCor dan pulmo dalam batas normal.",
+			MedID:   "MED-02", MedName: "Amoxicillin 500 mg Kapsul", KFA: "93001024", Dosage: "3 x 1 kapsul sesudah makan (habiskan)", Price: 350000,
+		},
+		{
+			NoRM: "RM-2026-002", NIK: "3171022508780002", BPJS: "0001234500102", IHS: "P0123456002",
+			FullName: "Ny. Siti Aminah", DOB: "1978-08-25", Sex: "F", Phone: "081234567802", MotherName: "Mariam binti Hasan", Address: "Jl. Gatot Subroto No. 45, Jakarta",
+			VisitNum: "VIS-" + today + "-0002", Unit: "Poli Saraf", Doctor: "dr. Farhan Malik, Sp.S",
+			Pay: "BPJS", SEP: "0112R0011126V000102", INACBG: "N-4-10-0", Service: "RJ",
+			DiagCode: "R51", DiagName: "Headache",
+			SOAPSubj:   "Cephalgia kronis hilang timbul sejak 1 bulan, disertai rasa pusing berputar.",
+			SOAPObj:    "CM, TD 125/80 mmHg. Nistagmus (-), Romberg sign (-), defisit neurologis fokal (-).",
+			SOAPAssess: "Cephalgia kronis + vertigo perifer dd sentral",
+			SOAPPlan:   "CT Scan kepala non kontras, Betahistine 6mg 3x1, Paracetamol 500mg 3x1 prn.",
+			AccNum:     "ACC-" + today + "-0002", StudyUID: "1.2.826.0.1.3680043.10.2026.1002", Modality: "CT",
+			ProcCode: "24725-4", ProcName: "CT Scan Kepala Non Kontras", RadNote: "Cephalgia & vertigo",
+			RadStatus: "COMPLETED", RptStatus: "FINAL",
+			RadText: "TEMUAN:\nSulci dan gyri normal. Diferensiasi alba-grisea baik.\nTidak tampak lesi hipodens/hiperdens patologis. Sistem ventrikel simetris.\n\nKESAN:\nCT Scan kepala saat ini dalam batas normal.",
+			MedID:   "MED-01", MedName: "Paracetamol 500 mg Tablet", KFA: "93001001", Dosage: "3 x 1 tablet bila nyeri", Price: 1250000,
+		},
+		{
+			NoRM: "RM-2026-003", NIK: "3273011503900003", BPJS: "", IHS: "P0123456003",
+			FullName: "Tn. Hendra Wijaya", DOB: "1990-03-15", Sex: "M", Phone: "081234567803", MotherName: "Ratna Kusuma Dewi", Address: "Jl. Diponegoro No. 8, Bandung",
+			VisitNum: "VIS-" + today + "-0003", Unit: "Paviliun Anggrek", Doctor: "dr. Farhan Malik, Sp.S", Bed: "BED-K1-01",
+			Pay: "ASURANSI", Service: "RI",
+			DiagCode: "G40.9", DiagName: "Epilepsy, unspecified",
+			SOAPSubj:   "Kejang fokal pada lengan dan tungkai kanan 2x dalam 1 bulan terakhir.",
+			SOAPObj:    "GCS 15. Refleks fisiologis normal, refleks patologis (-/-).",
+			SOAPAssess: "Focal onset aware motor seizure, etiologi belum diketahui",
+			SOAPPlan:   "Rawat inap Paviliun Anggrek K1-201, MRI Brain non kontras, Asam Valproat 250mg 2x1.",
+			AccNum:     "ACC-" + today + "-0003", StudyUID: "1.2.826.0.1.3680043.10.2026.1003", Modality: "MR",
+			ProcCode: "24727-0", ProcName: "MRI Brain T1 T2 Non Kontras", RadNote: "Evaluasi kejang fokal",
+			RadStatus: "COMPLETED", RptStatus: "FINAL",
+			RadText: "TEMUAN:\nT1W/T2W/FLAIR: parenkim serebri dan batang otak intensitas normal.\nCorpus callosum intak. Tidak tampak restriksi difusi maupun massa intrakranial.\n\nKESAN:\nMRI Brain dalam batas normal.",
+			MedID:   "MED-03", MedName: "Metformin 500 mg Tablet", KFA: "93001050", Dosage: "1 x 1 tablet", Price: 2400000,
+		},
+		{
+			NoRM: "RM-2026-004", NIK: "3174050411820004", BPJS: "", IHS: "P0123456004",
+			FullName: "Ny. Ratna Dewi", DOB: "1982-11-04", Sex: "F", Phone: "081234567804", MotherName: "Sri Rahayu", Address: "Jl. Ahmad Yani No. 19, Surabaya",
+			VisitNum: "VIS-" + today + "-0004", Unit: "Poli Penyakit Dalam", Doctor: "dr. Hendra Wijaya, Sp.PD",
+			Pay: "UMUM", Service: "RJ",
+			DiagCode: "K80.2", DiagName: "Calculus of gallbladder without cholecystitis",
+			SOAPSubj:   "Nyeri kolik perut kanan atas hilang timbul pasca santap santan/gorengan.",
+			SOAPObj:    "Abdomen supel, nyeri tekan kuadran kanan atas (+), Murphy sign (+).",
+			SOAPAssess: "Suspek Kolelitiasis simtomatik",
+			SOAPPlan:   "USG Abdomen whole, Omeprazole 20mg 2x1 ac, konsul Bedah Digestif.",
+			AccNum:     "ACC-" + today + "-0004", StudyUID: "1.2.826.0.1.3680043.10.2026.1004", Modality: "US",
+			ProcCode: "24606-6", ProcName: "USG Abdomen Whole", RadNote: "Nyeri perut kanan atas",
+			RadStatus: "COMPLETED", RptStatus: "FINAL",
+			RadText: "TEMUAN:\nHepar normal, ekostruktur homogen. Kandung empedu tampak batu soliter 0.8 cm acoustic shadow (+).\nPankreas, lien dan ginjal normal.\n\nKESAN:\nCholelithiasis soliter tanpa tanda kolesistitis akut.",
+			MedID:   "MED-05", MedName: "Omeprazole 20 mg Kapsul", KFA: "93001089", Dosage: "2 x 1 kapsul 30 menit sebelum makan", Price: 650000,
+		},
+		{
+			NoRM: "RM-2026-005", NIK: "3172031906650005", BPJS: "0001234500105", IHS: "P0123456005",
+			FullName: "Tn. Agus Salim", DOB: "1965-06-19", Sex: "M", Phone: "081234567805", MotherName: "Halimah", Address: "Jl. Malioboro No. 34, Yogyakarta",
+			VisitNum: "VIS-" + today + "-0005", Unit: "Poli Jantung", Doctor: "dr. Bambang Soediro, Sp.JP",
+			Pay: "BPJS", SEP: "0112R0011126V000105", INACBG: "I-4-10-0", Service: "RJ",
+			DiagCode: "I11.9", DiagName: "Hypertensive heart disease without heart failure",
+			SOAPSubj:   "Sesak napas saat berjalan jauh (DOE), riwayat hipertensi 10 tahun tidak terkontrol.",
+			SOAPObj:    "TD 165/95 mmHg, HR 82x/m. Iktus kordis bergeser ke lateral 2 cm.",
+			SOAPAssess: "HHD derajat II, Hipertensi stage II un-controlled",
+			SOAPPlan:   "Foto Thorax PA evaluasi CTR, Amlodipine 10mg 1x1, Captopril 25mg 2x1.",
+			AccNum:     "ACC-" + today + "-0005", StudyUID: "1.2.826.0.1.3680043.10.2026.1005", Modality: "DX",
+			ProcCode: "24627-2", ProcName: "Foto Thorax PA", RadNote: "Sesak napas & evaluasi kardiomegali",
+			RadStatus: "COMPLETED", RptStatus: "FINAL",
+			RadText: "TEMUAN:\nCor membesar ke kiri (CTR 58%) dengan elongasio aorta.\nPulmo: corakan vaskular meningkat di kedua lapangan bawah.\n\nKESAN:\nKardiomegali dengan elongasio aorta (suspek HHD).",
+			MedID:   "MED-04", MedName: "Amlodipine 10 mg Tablet", KFA: "93001072", Dosage: "1 x 1 tablet pagi hari", Price: 350000,
+		},
+		{
+			NoRM: "RM-2026-006", NIK: "3374011002940006", BPJS: "", IHS: "P0123456006",
+			FullName: "Nn. Putri Maharani", DOB: "1994-02-10", Sex: "F", Phone: "081234567806", MotherName: "Endang Susilowati", Address: "Jl. Pahlawan No. 71, Semarang",
+			VisitNum: "VIS-" + today + "-0006", Unit: "Poli Orthopedi", Doctor: "dr. Rizky Kurnia, Sp.OT",
+			Pay: "ASURANSI", Service: "RJ",
+			DiagCode: "M25.5", DiagName: "Pain in joint, knee",
+			SOAPSubj:   "Nyeri lutut kanan tajam setelah terkilir saat bermain basket 2 hari lalu.",
+			SOAPObj:    "Oedem genu dekstra minimal, ballotement test (-), nyeri tekan joint line medial (+).",
+			SOAPAssess: "Suspek Sprain Ligamen Genu Dekstra dd lesi meniskus medial",
+			SOAPPlan:   "Rontgen Genu AP/Lat dekstra, RICE therapy, Meloxicam 15mg 1x1.",
+			AccNum:     "ACC-" + today + "-0006", StudyUID: "1.2.826.0.1.3680043.10.2026.1006", Modality: "DX",
+			ProcCode: "24640-5", ProcName: "Foto Genu AP Lateral Dekstra", RadNote: "Post trauma olahraga",
+			RadStatus: "COMPLETED", RptStatus: "FINAL",
+			RadText: "TEMUAN:\nAlignment sendi genu dekstra baik. Tidak tampak fraktur maupun dislokasi.\nCelah sendi femorotibial normal.\n\nKESAN:\nTidak tampak fraktur maupun kelainan tulang pada genu dekstra.",
+			MedID:   "MED-01", MedName: "Paracetamol 500 mg Tablet", KFA: "93001001", Dosage: "3 x 1 tablet", Price: 350000,
+		},
+		{
+			NoRM: "RM-2026-007", NIK: "3175042809720007", BPJS: "0001234500107", IHS: "P0123456007",
+			FullName: "Tn. Dedi Kurniawan", DOB: "1972-09-28", Sex: "M", Phone: "081234567807", MotherName: "Dewi Sartika", Address: "Jl. Pemuda No. 15, Bekasi",
+			VisitNum: "VIS-" + today + "-0007", Unit: "Poli Paru", Doctor: "dr. Dian Anggraini, Sp.P",
+			Pay: "BPJS", SEP: "0112R0011126V000107", INACBG: "J-4-15-0", Service: "RJ",
+			DiagCode: "R91.1", DiagName: "Solitary pulmonary nodule",
+			SOAPSubj:   "Batuk disertai dahak bercak darah 2x kemarin, perokok 20 tahun.",
+			SOAPObj:    "KU cukup, suara napas vesikuler melemah di apex dextra. Tidak tampak sianosis.",
+			SOAPAssess: "Solitary pulmonary nodule lobus superior dekstra ec suspek massa dd TB",
+			SOAPPlan:   "CT Thorax dengan kontras, Cefixime 200mg 2x1, evaluasi dahak SPS.",
+			AccNum:     "ACC-" + today + "-0007", StudyUID: "1.2.826.0.1.3680043.10.2026.1007", Modality: "CT",
+			ProcCode: "24628-0", ProcName: "CT Thorax dengan Kontras", RadNote: "Batuk darah & nodul paru",
+			RadStatus: "COMPLETED", RptStatus: "FINAL",
+			RadText: "TEMUAN:\nTampak nodul solid berbatas tegas ukuran 1.1 cm di lobus superior paru kanan.\nPenyangatan kontras minimal. Tidak tampak limfadenopati mediastinum.\n\nKESAN:\nNodul paru soliter lobus superior dekstra; saran follow-up CT 3 bulan.",
+			MedID:   "MED-06", MedName: "Cefixime 200 mg Kapsul", KFA: "93001048", Dosage: "2 x 1 kapsul sesudah makan", Price: 1750000,
+		},
+		{
+			NoRM: "RM-2026-008", NIK: "3275021407880008", BPJS: "", IHS: "P0123456008",
+			FullName: "Ny. Lestari Wulandari", DOB: "1988-07-14", Sex: "F", Phone: "081234567808", MotherName: "Kartini", Address: "Jl. Riau No. 88, Bandung",
+			VisitNum: "VIS-" + today + "-0008", Unit: "Poli MCU", Doctor: "dr. Hendra Wijaya, Sp.PD",
+			Pay: "UMUM", Service: "RJ",
+			DiagCode: "Z00.0", DiagName: "General medical examination",
+			SOAPSubj:   "Pemeriksaan kesehatan rutin tahunan kantor, tidak ada keluhan berarti.",
+			SOAPObj:    "TTV normal, BMI 22.4 (normoweight). Pemeriksaan fisik umum baik.",
+			SOAPAssess: "Medical Check Up Rutin Eksekutif",
+			SOAPPlan:   "USG Abdomen screening, cek profil lipid, asam urat, fungsi ginjal.",
+			AccNum:     "ACC-" + today + "-0008", StudyUID: "1.2.826.0.1.3680043.10.2026.1008", Modality: "US",
+			ProcCode: "24606-6", ProcName: "USG Abdomen Screening", RadNote: "Screening MCU tahunan",
+			RadStatus: "SCHEDULED", RptStatus: "",
+			RadText: "",
+			MedID:   "MED-05", MedName: "Omeprazole 20 mg Kapsul", KFA: "93001089", Dosage: "1 x 1 bila perlu", Price: 550000,
+		},
+		{
+			NoRM: "RM-2026-009", NIK: "3173060312960009", BPJS: "0001234500109", IHS: "P0123456009",
+			FullName: "Tn. Rizky Pratama", DOB: "1996-12-03", Sex: "M", Phone: "081234567809", MotherName: "Nurhayati", Address: "Jl. Gajah Mada No. 102, Jakarta",
+			VisitNum: "VIS-" + today + "-0009", Unit: "Poli Saraf", Doctor: "dr. Farhan Malik, Sp.S",
+			Pay: "BPJS", SEP: "0112R0011126V000109", INACBG: "N-4-10-0", Service: "RJ",
+			DiagCode: "G43.9", DiagName: "Migraine, unspecified",
+			SOAPSubj:   "Migrain berulang sejak 6 bulan, berdenyut hebat sisi kiri disertai silau.",
+			SOAPObj:    "Tekanan darah 120/75 mmHg, pemeriksaan nervus kranialis I-XII intak.",
+			SOAPAssess: "Migraine with aura refrakter terapi lini pertama",
+			SOAPPlan:   "MRI Brain axial coronal, profilaksis flunarizine, abortif sumatriptan.",
+			AccNum:     "ACC-" + today + "-0009", StudyUID: "1.2.826.0.1.3680043.10.2026.1009", Modality: "MR",
+			ProcCode: "24727-0", ProcName: "MRI Brain Axial Coronal", RadNote: "Migrain berulang refrakter",
+			RadStatus: "SCHEDULED", RptStatus: "",
+			RadText: "",
+			MedID:   "MED-01", MedName: "Paracetamol 500 mg Tablet", KFA: "93001001", Dosage: "3 x 1 tablet", Price: 2200000,
+		},
+		{
+			NoRM: "RM-2026-010", NIK: "3171082105800010", BPJS: "0001234500110", IHS: "P0123456010",
+			FullName: "Ny. Yulia Permata", DOB: "1980-05-21", Sex: "F", Phone: "081234567810", MotherName: "Rohana", Address: "Jl. Hayam Wuruk No. 55, Jakarta",
+			VisitNum: "VIS-" + today + "-0010", Unit: "IGD Triase", Doctor: "dr. Rina Kusuma",
+			Pay: "BPJS", SEP: "0112R0011126V000110", INACBG: "Z-4-12-0", Service: "RJ",
+			DiagCode: "Z01.8", DiagName: "Other specified special examinations",
+			SOAPSubj:   "Persiapan operasi laparoskopi kolesistektomi elektif besok pagi.",
+			SOAPObj:    "KU baik, CM, tanda vital stabil. Cor dan pulmo normal pada auskultasi.",
+			SOAPAssess: "Evaluasi pra-anestesi dan pra-bedah kolesistektomi",
+			SOAPPlan:   "Rontgen dada PA pre-op, EKG 12 lead, puasa mulai pukul 24.00.",
+			AccNum:     "ACC-" + today + "-0010", StudyUID: "1.2.826.0.1.3680043.10.2026.1010", Modality: "DX",
+			ProcCode: "24627-2", ProcName: "Foto Thorax Pre Operasi", RadNote: "Skrining pra operasi elektif",
+			RadStatus: "ORDERED", RptStatus: "",
+			RadText: "",
+			MedID:   "MED-07", MedName: "Ceftriaxone 1 g Injeksi", KFA: "93001112", Dosage: "1 x 1 g IV pra-operasi", Price: 350000,
+		},
+		{
+			NoRM: "RM-2026-011", NIK: "3171051508920011", BPJS: "0001234500111", IHS: "P0123456011",
+			FullName: "Tn. Fajar Nugraha", DOB: "1992-08-15", Sex: "M", Phone: "081234567811", MotherName: "Sri Wahyuni", Address: "Jl. Tebet Raya No. 42, Jakarta",
+			VisitNum: "VIS-" + today + "-0011", Unit: "Poli Umum", Doctor: "dr. Ahmad Fauzi",
+			Pay: "BPJS", SEP: "0112R0011126V000111", INACBG: "A-4-10-0", Service: "RJ",
+			DiagCode: "A90", DiagName: "Dengue fever [classical dengue]",
+			SOAPSubj:   "Demam tinggi mendadak sejak 3 hari, menggigil, nyeri otot & sendi hebat, mual.",
+			SOAPObj:    "Suhu 38.8 C, TD 110/75 mmHg, HR 92x/m. Uji Tourniquet (Rumple Leede) (+), petekie (-).",
+			SOAPAssess: "Dengue Fever suspek trombositopenia grade I",
+			SOAPPlan:   "Cek Darah Lengkap (DL) cito, NS1 Ag, terapi hidrasi oralit & cairan 2.5L/hari, Paracetamol 500mg 3x1.",
+			AccNum:     "ACC-" + today + "-0011", StudyUID: "1.2.826.0.1.3680043.10.2026.1011", Modality: "DX",
+			ProcCode: "24627-2", ProcName: "Foto Thorax Screening Efusi", RadNote: "Skrining efusi pleura dekstra ec DHF",
+			RadStatus: "ORDERED", RptStatus: "",
+			RadText: "",
+			MedID:   "MED-01", MedName: "Paracetamol 500 mg Tablet", KFA: "93001001", Dosage: "3 x 1 tablet bila demam", Price: 350000,
+		},
+		{
+			NoRM: "RM-2026-012", NIK: "3171093010950012", BPJS: "0001234500112", IHS: "P0123456012",
+			FullName: "Ny. Anisa Fitri", DOB: "1995-10-30", Sex: "F", Phone: "081234567812", MotherName: "Nurul Aini", Address: "Jl. Melawai No. 18, Jakarta",
+			VisitNum: "VIS-" + today + "-0012", Unit: "Poli Gigi & Mulut", Doctor: "drg. Maya Indah, Sp.KG",
+			Pay: "BPJS", SEP: "0112R0011126V000112", INACBG: "U-4-12-0", Service: "RJ",
+			DiagCode: "K04.0", DiagName: "Pulpitis irreversible",
+			SOAPSubj:   "Sakit gigi geraham bawah kanan berdenyut hebat sejak 2 hari, bertambah sakit saat minum dingin.",
+			SOAPObj:    "Kavitas profunda gigi 46 (molar 1 bawah kanan), sondasi (+), perkusi (+), palpasi (-).",
+			SOAPAssess: "Pulpitis Ireversibel Gigi 46 molar 1 mandibular dekstra",
+			SOAPPlan:   "Rontgen Dental Panoramic / Periapikal, Trepanasi pulpa, ekstirpasi, analgesik Asam Mefenamat.",
+			AccNum:     "ACC-" + today + "-0012", StudyUID: "1.2.826.0.1.3680043.10.2026.1012", Modality: "DX",
+			ProcCode: "24640-5", ProcName: "Rontgen Panoramic Dental", RadNote: "Evaluasi apeks akar gigi 46",
+			RadStatus: "ORDERED", RptStatus: "",
+			RadText: "",
+			MedID:   "MED-01", MedName: "Paracetamol 500 mg Tablet", KFA: "93001001", Dosage: "3 x 1 tablet bila nyeri", Price: 350000,
+		},
+	}
+
+	for idx, s := range samples {
+		p := &Patient{
+			ID: uuid.NewString(), NoRM: s.NoRM, NIK: s.NIK, BPJSNumber: s.BPJS, IHSNumber: s.IHS,
+			FullName: s.FullName, BirthDate: s.DOB, Sex: s.Sex, Phone: s.Phone, MotherName: s.MotherName, Address: s.Address, CreatedAt: now.Add(-time.Duration(10-idx) * time.Hour),
+		}
 		m.patients[p.ID] = p
-	}
 
-	v1 := &Visit{
-		ID: uuid.NewString(), VisitNumber: "VIS-" + today + "-0001", QueueNumber: "A-001",
-		PatientID: p1.ID, PatientNoRM: p1.NoRM, PatientName: p1.FullName,
-		ServiceType: "RJ", UnitName: "Poli Penyakit Dalam", DoctorName: "dr. Hendra Wijaya, Sp.PD",
-		PaymentType: "BPJS", SEPNumber: "0112R0011126V000101", INACBGCode: "Q-5-44-0", INACBGTariff: 185000,
-		Status: "DIPERIKSA", SatusehatEncounterID: "enc-simrs-001", CreatedAt: now.Add(-45 * time.Minute), UpdatedAt: now,
-	}
-	v2 := &Visit{
-		ID: uuid.NewString(), VisitNumber: "VIS-" + today + "-0002", QueueNumber: "IGD-01",
-		PatientID: p2.ID, PatientNoRM: p2.NoRM, PatientName: p2.FullName,
-		ServiceType: "IGD", UnitName: "IGD Triase", DoctorName: "dr. Rina Kusuma", TriageLevel: "KUNING",
-		PaymentType: "BPJS", SEPNumber: "0112R0011126V000102", INACBGCode: "Q-5-44-0", INACBGTariff: 185000,
-		Status: "DIPERIKSA", SatusehatEncounterID: "enc-simrs-002", CreatedAt: now.Add(-30 * time.Minute), UpdatedAt: now,
-	}
-	v3 := &Visit{
-		ID: uuid.NewString(), VisitNumber: "VIS-" + today + "-0003", QueueNumber: "RI-01",
-		PatientID: p3.ID, PatientNoRM: p3.NoRM, PatientName: p3.FullName,
-		ServiceType: "RI", UnitName: "Paviliun Anggrek", DoctorName: "dr. Hendra Wijaya, Sp.PD", BedID: "BED-K1-01",
-		PaymentType: "UMUM", Status: "RAWAT_INAP", SatusehatEncounterID: "enc-simrs-003", CreatedAt: now.Add(-6 * time.Hour), UpdatedAt: now,
-	}
-	m.beds["BED-K1-01"].Status = "TERISI"
-	m.beds["BED-K1-01"].CurrentVisitID = v3.ID
-	m.beds["BED-K1-01"].CurrentPatientName = p3.FullName
-
-	for _, v := range []*Visit{v1, v2, v3} {
+		v := &Visit{
+			ID: uuid.NewString(), VisitNumber: s.VisitNum, QueueNumber: fmt.Sprintf("A-%03d", idx+1),
+			PatientID: p.ID, PatientNoRM: p.NoRM, PatientName: p.FullName,
+			ServiceType: s.Service, UnitName: s.Unit, DoctorName: s.Doctor, BedID: s.Bed,
+			PaymentType: s.Pay, SEPNumber: s.SEP, INACBGCode: s.INACBG, INACBGTariff: 185000,
+			Status: "DIPERIKSA", SatusehatEncounterID: fmt.Sprintf("enc-simrs-%03d", idx+1),
+			CreatedAt: now.Add(-time.Duration(10-idx) * 45 * time.Minute), UpdatedAt: now,
+		}
+		if s.Service == "RI" {
+			v.Status = "RAWAT_INAP"
+			if s.Bed != "" && m.beds[s.Bed] != nil {
+				m.beds[s.Bed].Status = "TERISI"
+				m.beds[s.Bed].CurrentVisitID = v.ID
+				m.beds[s.Bed].CurrentPatientName = p.FullName
+			}
+		}
 		m.visits[v.ID] = v
-	}
 
-	// Sample SOAP note
-	m.soaps[v1.ID] = []*SOAPNote{{
-		ID: uuid.NewString(), VisitID: v1.ID, AuthorName: v1.DoctorName,
-		Subjective: "Batuk berdahak 3 minggu, sesak napas ringan saat aktivitas.",
-		Objective:  "Keadaan umum sedang, compos mentis, ronki halus basal paru kanan.",
-		BPSystolic: 132, BPDiastolic: 84, HeartRate: 88, Temperature: 37.2, RespRate: 22, SpO2: 96,
-		ICD10Code: "J18.9", ICD10Name: "Pneumonia, unspecified",
-		Assessment: "Suspek Pneumonia Komunitas (CAP)",
-		Plan:       "Order CT Thorax Non Kontras ke RIS/PACS, terapi antibiotik & mukolitik.",
-		CreatedAt:  now.Add(-25 * time.Minute),
-	}}
+		// SOAP note
+		m.soaps[v.ID] = []*SOAPNote{{
+			ID: uuid.NewString(), VisitID: v.ID, AuthorName: s.Doctor,
+			Subjective: s.SOAPSubj, Objective: s.SOAPObj,
+			BPSystolic: 120, BPDiastolic: 80, HeartRate: 78, Temperature: 36.8, RespRate: 20, SpO2: 98,
+			ICD10Code: s.DiagCode, ICD10Name: s.DiagName, Assessment: s.SOAPAssess, Plan: s.SOAPPlan,
+			CreatedAt: now.Add(-time.Duration(10-idx) * 30 * time.Minute),
+		}}
 
-	// Sample Radiology Order pointing to the exact StudyInstanceUID seeded in Core PACS!
-	m.radOrders = append(m.radOrders, &RadiologyOrder{
-		ID: uuid.NewString(), VisitID: v1.ID, PatientNoRM: p1.NoRM, PatientName: p1.FullName,
-		AccessionNumber: "ACC-" + today + "-0001", StudyInstanceUID: "1.2.826.0.1.3680043.10.2026.1001",
-		Modality: "CT", ProcedureCode: "24627-2", ProcedureName: "CT Thorax Non Kontras",
-		ClinicalNote: "Evaluasi infiltrat / nodul paru kanan", Status: "COMPLETED", RISSyncStatus: "SYNCED_HL7",
-		Price: 1450000, CreatedAt: now.Add(-20 * time.Minute),
-	})
+		// Radiology Order
+		rad := &RadiologyOrder{
+			ID: uuid.NewString(), VisitID: v.ID, PatientNoRM: p.NoRM, PatientName: p.FullName,
+			AccessionNumber: s.AccNum, StudyInstanceUID: s.StudyUID,
+			Modality: s.Modality, ProcedureCode: s.ProcCode, ProcedureName: s.ProcName,
+			ClinicalNote: s.RadNote, Status: s.RadStatus, RISSyncStatus: "SYNCED_HL7",
+			ReportStatus: s.RptStatus, RadiologistName: "dr. Andi Pratama, Sp.Rad", ReportText: s.RadText,
+			Price: s.Price, CreatedAt: now.Add(-time.Duration(10-idx) * 20 * time.Minute),
+		}
+		m.radOrders = append(m.radOrders, rad)
 
-	// Sample Prescription waiting in Pharmacy
-	rx1 := &Prescription{
-		ID: uuid.NewString(), RxNumber: "RX-" + today + "-0001", VisitID: v1.ID,
-		PatientNoRM: p1.NoRM, PatientName: p1.FullName, DoctorName: v1.DoctorName,
-		MedicationID: "MED-02", MedicationName: "Amoxicillin 500 mg Kapsul", KFACode: "93001024",
-		Qty: 15, Dosage: "3 x 1 kapsul sesudah makan (habiskan)", TotalPrice: 52500, Status: "MENUNGGU",
-		CreatedAt: now.Add(-15 * time.Minute),
-	}
-	m.prescriptions[rx1.ID] = rx1
+		// Prescription
+		rx := &Prescription{
+			ID: uuid.NewString(), RxNumber: fmt.Sprintf("RX-%s-%04d", today, idx+1), VisitID: v.ID,
+			PatientNoRM: p.NoRM, PatientName: p.FullName, DoctorName: s.Doctor,
+			MedicationID: s.MedID, MedicationName: s.MedName, KFACode: s.KFA,
+			Qty: 15, Dosage: s.Dosage, TotalPrice: 45000, Status: "MENUNGGU",
+			CreatedAt: now.Add(-time.Duration(10-idx) * 15 * time.Minute),
+		}
+		if s.RadStatus == "COMPLETED" {
+			rx.Status = "SELESAI"
+		}
+		m.prescriptions[rx.ID] = rx
 
-	// Sample Billing items
-	m.billing[v1.ID] = []*BillingItem{
-		{ID: uuid.NewString(), VisitID: v1.ID, Category: "KONSULTASI", Description: "Konsultasi Dokter Spesialis Penyakit Dalam", Qty: 1, UnitPrice: 175000, Subtotal: 175000, CreatedAt: now},
-		{ID: uuid.NewString(), VisitID: v1.ID, Category: "RADIOLOGI", Description: "CT Thorax Non Kontras", Qty: 1, UnitPrice: 1450000, Subtotal: 1450000, CreatedAt: now},
+		// Billing item
+		m.billing[v.ID] = []*BillingItem{
+			{ID: uuid.NewString(), VisitID: v.ID, Category: "KONSULTASI", Description: "Konsultasi " + s.Unit, Qty: 1, UnitPrice: 175000, Subtotal: 175000, CreatedAt: now},
+			{ID: uuid.NewString(), VisitID: v.ID, Category: "RADIOLOGI", Description: s.ProcName, Qty: 1, UnitPrice: s.Price, Subtotal: s.Price, CreatedAt: now},
+		}
 	}
-	m.billing[v3.ID] = []*BillingItem{
-		{ID: uuid.NewString(), VisitID: v3.ID, Category: "KAMAR", Description: "Rawat Inap Kelas 1 (K1-201) - 1 Hari", Qty: 1, UnitPrice: 650000, Subtotal: 650000, CreatedAt: now},
+	m.seq = 20
+
+	// Seed realistic initial audit trail for clinical governance & UU PDP compliance
+	ctx := context.Background()
+	_ = m.AppendAudit(ctx, "admin", "INIT_SYSTEM", "SYSTEM", "SIMRS_SERVER", "Sistem SIMRS diinisialisasi & parameter keamanan aktif")
+	_ = m.AppendAudit(ctx, "admisi", "REGISTER_PATIENT", "PATIENT", "RM-2026-001", "Pendaftaran pasien baru Tn. Budi Santoso (BPJS)")
+	_ = m.AppendAudit(ctx, "admisi", "CREATE_VISIT", "VISIT", "V-20261124-0001", "Kunjungan Rawat Jalan Poli Penyakit Dalam")
+	_ = m.AppendAudit(ctx, "dokter", "CREATE_SOAP", "RME", "RM-2026-001", "Pemeriksaan medis & diagnosa J18.9 Pneumonia")
+	_ = m.AppendAudit(ctx, "dokter", "ORDER_RADIOLOGY", "RIS", "ACC-20261124-0001", "Order Foto Thorax PA ke Instalasi Radiologi")
+	_ = m.AppendAudit(ctx, "radiolog", "VIEW_PACS", "PACS", "1.2.826.0.1.3680043.10.2026.1001", "Inspeksi citra rontgen dada via Diagnostic Viewer")
+	_ = m.AppendAudit(ctx, "radiolog", "FINAL_REPORT", "RME", "ACC-20261124-0001", "Finalisasi hasil ekspertise radiologi")
+	_ = m.AppendAudit(ctx, "farmasi", "DISPENSE_RX", "FARMASI", "RX-20261124-0001", "Verifikasi KFA & penyerahan obat Azithromycin 500mg")
+	_ = m.AppendAudit(ctx, "kasir", "ISSUE_SEP", "BPJS", "0001R0011124V000001", "Penerbitan SEP Rawat Jalan & klaim INA-CBG")
+	_ = m.AppendAudit(ctx, "kasir", "SETTLE_BILLING", "BILLING", "V-20261124-0001", "Pelunasan tagihan pasien BPJS")
+}
+
+func (m *MemoryStore) ListClinics(_ context.Context) ([]ClinicUnit, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]ClinicUnit, len(m.clinics))
+	copy(out, m.clinics)
+	return out, nil
+}
+
+func DefaultClinics() []ClinicUnit {
+	return []ClinicUnit{
+		{
+			Code: "POLI-UMUM", Name: "Poli Umum", Specialty: "Pelayanan Medis Dasar / Dokter Umum",
+			BPJSPoliCode: "UMU", RoomNumber: "R.101", Floor: "Lantai 1 Dasar",
+			DefaultDoctor: "dr. Ahmad Fauzi", DoctorList: []string{"dr. Ahmad Fauzi", "dr. Rina Kusuma"},
+			OperatingHours: "07:30 - 21:00 WIB",
+		},
+		{
+			Code: "POLI-PD", Name: "Poli Penyakit Dalam", Specialty: "Spesialis Penyakit Dalam (Sp.PD)",
+			BPJSPoliCode: "INT", RoomNumber: "R.201", Floor: "Lantai 2",
+			DefaultDoctor: "dr. Hendra Wijaya, Sp.PD", DoctorList: []string{"dr. Hendra Wijaya, Sp.PD"},
+			OperatingHours: "08:00 - 14:00 WIB",
+		},
+		{
+			Code: "POLI-GIGI", Name: "Poli Gigi & Mulut", Specialty: "Dokter Gigi & Konservasi Gigi (Sp.KG)",
+			BPJSPoliCode: "GIG", RoomNumber: "R.105", Floor: "Lantai 1 Dasar",
+			DefaultDoctor: "drg. Maya Indah, Sp.KG", DoctorList: []string{"drg. Maya Indah, Sp.KG", "drg. Anisa Rahma"},
+			OperatingHours: "08:30 - 15:00 WIB",
+		},
+		{
+			Code: "POLI-SARAF", Name: "Poli Saraf (Neurologi)", Specialty: "Spesialis Neurologi (Sp.N / Sp.S)",
+			BPJSPoliCode: "SAR", RoomNumber: "R.203", Floor: "Lantai 2",
+			DefaultDoctor: "dr. Farhan Malik, Sp.S", DoctorList: []string{"dr. Farhan Malik, Sp.S"},
+			OperatingHours: "08:30 - 14:00 WIB",
+		},
+		{
+			Code: "POLI-JANTUNG", Name: "Poli Jantung & Pembuluh Darah", Specialty: "Spesialis Jantung & Pembuluh Darah (Sp.JP)",
+			BPJSPoliCode: "JAN", RoomNumber: "R.205", Floor: "Lantai 2",
+			DefaultDoctor: "dr. Bambang Soediro, Sp.JP", DoctorList: []string{"dr. Bambang Soediro, Sp.JP"},
+			OperatingHours: "09:00 - 13:30 WIB",
+		},
+		{
+			Code: "POLI-ANAK", Name: "Poli Anak (Pediatri)", Specialty: "Spesialis Kesehatan Anak (Sp.A)",
+			BPJSPoliCode: "ANA", RoomNumber: "R.108", Floor: "Lantai 1 Dasar",
+			DefaultDoctor: "dr. Siti Nurhaliza, Sp.A", DoctorList: []string{"dr. Siti Nurhaliza, Sp.A"},
+			OperatingHours: "08:00 - 14:00 WIB",
+		},
+		{
+			Code: "POLI-ORTHO", Name: "Poli Bedah & Orthopedi", Specialty: "Spesialis Orthopedi & Traumatologi (Sp.OT)",
+			BPJSPoliCode: "ORT", RoomNumber: "R.207", Floor: "Lantai 2",
+			DefaultDoctor: "dr. Rizky Kurnia, Sp.OT", DoctorList: []string{"dr. Rizky Kurnia, Sp.OT"},
+			OperatingHours: "10:00 - 15:00 WIB",
+		},
+		{
+			Code: "POLI-PARU", Name: "Poli Paru & Respirasi", Specialty: "Spesialis Pulmonologi & Kedokteran Respirasi (Sp.P)",
+			BPJSPoliCode: "PAR", RoomNumber: "R.209", Floor: "Lantai 2",
+			DefaultDoctor: "dr. Dian Anggraini, Sp.P", DoctorList: []string{"dr. Dian Anggraini, Sp.P"},
+			OperatingHours: "08:00 - 13:00 WIB",
+		},
+		{
+			Code: "POLI-MATA", Name: "Poli Mata (Oftalmologi)", Specialty: "Spesialis Mata (Sp.M)",
+			BPJSPoliCode: "MAT", RoomNumber: "R.110", Floor: "Lantai 1 Dasar",
+			DefaultDoctor: "dr. Aris Setiawan, Sp.M", DoctorList: []string{"dr. Aris Setiawan, Sp.M"},
+			OperatingHours: "08:30 - 14:00 WIB",
+		},
+		{
+			Code: "POLI-THT", Name: "Poli THT-KL", Specialty: "Spesialis Telinga Hidung Tenggorok (Sp.THT-KL)",
+			BPJSPoliCode: "THT", RoomNumber: "R.112", Floor: "Lantai 1 Dasar",
+			DefaultDoctor: "dr. Nadia Utami, Sp.THT-KL", DoctorList: []string{"dr. Nadia Utami, Sp.THT-KL"},
+			OperatingHours: "09:00 - 14:00 WIB",
+		},
+		{
+			Code: "POLI-OBGYN", Name: "Poli Kebidanan & Kandungan", Specialty: "Spesialis Obstetri & Ginekologi (Sp.OG)",
+			BPJSPoliCode: "OBG", RoomNumber: "R.212", Floor: "Lantai 2",
+			DefaultDoctor: "dr. Ratna Juwita, Sp.OG", DoctorList: []string{"dr. Ratna Juwita, Sp.OG"},
+			OperatingHours: "08:00 - 14:00 WIB",
+		},
+		{
+			Code: "POLI-MCU", Name: "Poli Medical Check Up", Specialty: "Pemeriksaan Kesehatan Rutin & Skrining Okupasi",
+			BPJSPoliCode: "MCU", RoomNumber: "Gedung Diagnostic Lt.1", Floor: "Lantai 1 Dasar",
+			DefaultDoctor: "dr. Hendra Wijaya, Sp.PD", DoctorList: []string{"dr. Hendra Wijaya, Sp.PD"},
+			OperatingHours: "07:30 - 12:00 WIB",
+		},
+		{
+			Code: "IGD", Name: "Instalasi Gawat Darurat (IGD)", Specialty: "Pelayanan Gawat Darurat & Triase 24 Jam",
+			BPJSPoliCode: "IGD", RoomNumber: "Zona Triase (Merah/Kuning/Hijau)", Floor: "Lantai 1 Dasar",
+			DefaultDoctor: "dr. Rina Kusuma", DoctorList: []string{"dr. Rina Kusuma", "dr. Ahmad Fauzi"},
+			OperatingHours: "24 Jam Non-Stop",
+		},
+		{
+			Code: "RAWAT-INAP", Name: "Instalasi Rawat Inap", Specialty: "Bangsal Perawatan & Intensive Care (ICU)",
+			BPJSPoliCode: "RANAP", RoomNumber: "Paviliun Anggrek & Melati", Floor: "Lantai 3 & 4",
+			DefaultDoctor: "dr. Hendra Wijaya, Sp.PD", DoctorList: []string{"dr. Hendra Wijaya, Sp.PD", "dr. Farhan Malik, Sp.S"},
+			OperatingHours: "24 Jam Non-Stop",
+		},
 	}
-	m.seq = 10
 }
 
 func (m *MemoryStore) ListPatients(_ context.Context, query string) ([]Patient, error) {
@@ -165,7 +471,7 @@ func (m *MemoryStore) ListPatients(_ context.Context, query string) ([]Patient, 
 	out := make([]Patient, 0, len(m.patients))
 	for _, p := range m.patients {
 		if q != "" {
-			hay := strings.ToLower(p.NoRM + " " + p.FullName + " " + p.NIK + " " + p.BPJSNumber)
+			hay := strings.ToLower(p.NoRM + " " + p.FullName + " " + p.NIK + " " + p.Phone + " " + p.MotherName + " " + p.BPJSNumber)
 			if !strings.Contains(hay, q) {
 				continue
 			}
@@ -443,7 +749,7 @@ func (m *MemoryStore) CreateRadiologyOrder(_ context.Context, o RadiologyOrder) 
 	m.billing[o.VisitID] = append(m.billing[o.VisitID], &BillingItem{
 		ID: uuid.NewString(), VisitID: o.VisitID, Category: "RADIOLOGI",
 		Description: fmt.Sprintf("%s (%s)", o.ProcedureName, o.Modality),
-		Qty: 1, UnitPrice: o.Price, Subtotal: o.Price, CreatedAt: now,
+		Qty:         1, UnitPrice: o.Price, Subtotal: o.Price, CreatedAt: now,
 	})
 	return o, nil
 }
@@ -517,7 +823,7 @@ func (m *MemoryStore) DispensePrescription(_ context.Context, rxID string) (Pres
 	m.billing[rx.VisitID] = append(m.billing[rx.VisitID], &BillingItem{
 		ID: uuid.NewString(), VisitID: rx.VisitID, Category: "FARMASI",
 		Description: fmt.Sprintf("%s (%s)", rx.MedicationName, rx.RxNumber),
-		Qty: rx.Qty, UnitPrice: rx.TotalPrice / int64(max(rx.Qty, 1)), Subtotal: rx.TotalPrice, CreatedAt: time.Now().UTC(),
+		Qty:         rx.Qty, UnitPrice: rx.TotalPrice / int64(max(rx.Qty, 1)), Subtotal: rx.TotalPrice, CreatedAt: time.Now().UTC(),
 	})
 	return *rx, nil
 }

@@ -20,6 +20,10 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
 }
 
+func (p *PostgresStore) ListClinics(_ context.Context) ([]ClinicUnit, error) {
+	return DefaultClinics(), nil
+}
+
 func (p *PostgresStore) ListPatients(ctx context.Context, query string) ([]Patient, error) {
 	var (
 		rows pgx.Rows
