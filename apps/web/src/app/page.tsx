@@ -29,6 +29,10 @@ import {
   getAllowedWorkstations,
   getDefaultWorkstation,
 } from "@/lib/api";
+import OdontogramCanvas from "@/components/specialty/OdontogramCanvas";
+import NeuroScore from "@/components/specialty/NeuroScore";
+import PediatricGrowthChart from "@/components/specialty/PediatricGrowthChart";
+import OphthalmologyCanvas from "@/components/specialty/OphthalmologyCanvas";
 
 const DEFAULT_CLINICS: ClinicUnit[] = [
   { code: "POLI-UMUM", name: "Poli Umum", specialty: "Pelayanan Medis Dasar / Dokter Umum", bpjs_poli_code: "UMU", room_number: "R.101", floor: "Lantai 1 Dasar", default_doctor: "dr. Ahmad Fauzi", doctor_list: ["dr. Ahmad Fauzi", "dr. Rina Kusuma"], operating_hours: "07:30 - 21:00 WIB" },
@@ -92,6 +96,7 @@ export default function SIMRSConsolePage() {
   // Selected visit for RME
   const [activeVisitId, setActiveVisitId] = useState("");
   const [soaps, setSoaps] = useState<SOAPNote[]>([]);
+  const [specialtyMode, setSpecialtyMode] = useState<"auto" | "odontogram" | "neuro" | "pediatric" | "eye" | "general">("auto");
 
   // Forms
   const [newPat, setNewPat] = useState({ full_name: "", nik: "", bpjs_number: "", birth_date: "1990-01-01", sex: "M", phone: "", mother_name: "" });
@@ -421,6 +426,27 @@ export default function SIMRSConsolePage() {
   const activeVisit = visits.find((v) => v.id === activeVisitId) || null;
   const activeVisitRads = radOrders.filter((r) => r.visit_id === activeVisitId);
   const activeVisitRxs = prescriptions.filter((rx) => rx.visit_id === activeVisitId);
+
+  const effectiveSpecialty = useMemo(() => {
+    if (specialtyMode !== "auto") return specialtyMode;
+    if (!activeVisit) return "general";
+    const u = (activeVisit.unit_name || "").toLowerCase();
+    if (u.includes("gigi") || u.includes("mulut")) return "odontogram";
+    if (u.includes("saraf") || u.includes("neuro")) return "neuro";
+    if (u.includes("anak") || u.includes("pediatri")) return "pediatric";
+    if (u.includes("mata") || u.includes("oftalm")) return "eye";
+    return "general";
+  }, [specialtyMode, activeVisit]);
+
+  const handleExportSpecialtyToSOAP = (objectiveText: string, icd10Code?: string, icd10Name?: string) => {
+    setSoapForm((prev) => ({
+      ...prev,
+      objective: prev.objective ? `${prev.objective}\n\n${objectiveText}` : objectiveText,
+      icd10_code: icd10Code || prev.icd10_code,
+      icd10_name: icd10Name || prev.icd10_name,
+    }));
+    notify(`Temuan spesialisasi (${icd10Code || "Objektif"}) dimasukkan ke SOAP.`);
+  };
 
   const filteredVisits = visits.filter((v) => {
     if (poliFilter !== "ALL") {
@@ -1427,6 +1453,95 @@ export default function SIMRSConsolePage() {
               {activeVisit && (
                 <div className="mono" style={{ color: "var(--muted)", fontSize: 11 }}>
                   Encounter: {activeVisit.satusehat_encounter_id}
+                </div>
+              )}
+            </section>
+
+            {/* KANVAS PEMERIKSAAN SPESIALISASI KLINIS */}
+            <section className="card" style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <h3 style={{ margin: 0 }}>🎯 Kanvas Pemeriksaan Spesialisasi Klinis</h3>
+                  <span className="badge badge-cyan">
+                    {effectiveSpecialty === "odontogram"
+                      ? "🦷 Poli Gigi & Mulut"
+                      : effectiveSpecialty === "neuro"
+                      ? "🧠 Poli Saraf (Neurologi)"
+                      : effectiveSpecialty === "pediatric"
+                      ? "👶 Poli Anak (Pediatri)"
+                      : effectiveSpecialty === "eye"
+                      ? "👁️ Poli Mata (Oftalmologi)"
+                      : "📋 Umum / CPPT Standar"}
+                  </span>
+                  {activeVisit && (
+                    <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+                      Unit Pasien: {activeVisit.unit_name}
+                    </span>
+                  )}
+                </div>
+
+                {/* Switcher Tab Pills */}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setSpecialtyMode("odontogram")}
+                    className={`btn ${effectiveSpecialty === "odontogram" ? "btn-primary" : "btn-secondary"}`}
+                    style={{ fontSize: 11, padding: "5px 10px" }}
+                  >
+                    🦷 Odontogram Gigi
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpecialtyMode("neuro")}
+                    className={`btn ${effectiveSpecialty === "neuro" ? "btn-primary" : "btn-secondary"}`}
+                    style={{ fontSize: 11, padding: "5px 10px" }}
+                  >
+                    🧠 Skoring Saraf (GCS & NIHSS)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpecialtyMode("pediatric")}
+                    className={`btn ${effectiveSpecialty === "pediatric" ? "btn-primary" : "btn-secondary"}`}
+                    style={{ fontSize: 11, padding: "5px 10px" }}
+                  >
+                    👶 Kurva Anak WHO
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpecialtyMode("eye")}
+                    className={`btn ${effectiveSpecialty === "eye" ? "btn-primary" : "btn-secondary"}`}
+                    style={{ fontSize: 11, padding: "5px 10px" }}
+                  >
+                    👁️ Refraksi & TIO Mata
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpecialtyMode("auto")}
+                    className={`btn ${specialtyMode === "auto" ? "btn-cyan" : "btn-secondary"}`}
+                    style={{ fontSize: 11, padding: "5px 10px" }}
+                    title="Deteksi otomatis spesialisasi berdasarkan poli asal pasien"
+                  >
+                    ⚡ Auto ({activeVisit?.unit_name?.split(" ")[1] || "Poli"})
+                  </button>
+                </div>
+              </div>
+
+              {/* Render Canvas */}
+              {effectiveSpecialty === "odontogram" && (
+                <OdontogramCanvas onExportToSOAP={handleExportSpecialtyToSOAP} />
+              )}
+              {effectiveSpecialty === "neuro" && (
+                <NeuroScore onExportToSOAP={handleExportSpecialtyToSOAP} />
+              )}
+              {effectiveSpecialty === "pediatric" && (
+                <PediatricGrowthChart onExportToSOAP={handleExportSpecialtyToSOAP} />
+              )}
+              {effectiveSpecialty === "eye" && (
+                <OphthalmologyCanvas onExportToSOAP={handleExportSpecialtyToSOAP} />
+              )}
+              {effectiveSpecialty === "general" && (
+                <div style={{ padding: "16px 20px", background: "#0d121c", borderRadius: 8, border: "1px dashed var(--border)", textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+                  Pasien berada di unit layanan umum / non-spesifik. Gunakan form <strong>CPPT / SOAP</strong> di bawah untuk pencatatan rutin, atau klik salah satu tombol spesialisasi di atas (Odontogram, Saraf, Anak, Mata) jika memerlukan kanvas khusus.
                 </div>
               )}
             </section>
