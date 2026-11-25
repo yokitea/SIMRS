@@ -256,6 +256,54 @@ type WorkOrderIPSRS struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type NutritionOrder struct {
+	ID           string `json:"id"`
+	PatientName  string `json:"patient_name"`
+	WardRoom     string `json:"ward_room"`
+	DietType     string `json:"diet_type"`
+	MealSlot     string `json:"meal_slot"`
+	Allergies    string `json:"allergies"`
+	CaloriesKcal int    `json:"calories_kcal"`
+	Status       string `json:"status"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+type CSSDSterilizationBatch struct {
+	ID           string  `json:"id"`
+	BatchNo      string  `json:"batch_no"`
+	SetName      string  `json:"set_name"`
+	UnitOrigin   string  `json:"unit_origin"`
+	Method       string  `json:"method"`
+	TempC        float64 `json:"temp_c"`
+	PressureBar  float64 `json:"pressure_bar"`
+	BioIndicator string  `json:"bio_indicator"`
+	Status       string  `json:"status"`
+	ExpiresAt    string  `json:"expires_at"`
+}
+
+type AmbulanceUnit struct {
+	ID             string `json:"id"`
+	PlateNo        string `json:"plate_no"`
+	UnitName       string `json:"unit_name"`
+	Type           string `json:"type"`
+	DriverName     string `json:"driver_name"`
+	ParamedicName  string `json:"paramedic_name"`
+	Status         string `json:"status"`
+	CurrentMission string `json:"current_mission"`
+	FuelPct        int    `json:"fuel_pct"`
+	OxygenBar      int    `json:"oxygen_bar"`
+}
+
+type ParkingGateStatus struct {
+	ID            string `json:"id"`
+	ZoneName      string `json:"zone_name"`
+	VehicleType   string `json:"vehicle_type"`
+	TotalSlots    int    `json:"total_slots"`
+	OccupiedSlots int    `json:"occupied_slots"`
+	GateStatus    string `json:"gate_status"`
+	DailyRevenue  int64  `json:"daily_revenue"`
+}
+
 type Repository interface {
 	GetExecutiveMetrics(ctx context.Context) (ExecutiveMetrics, error)
 	ListStaffCredentials(ctx context.Context) ([]StaffCredential, error)
@@ -267,6 +315,14 @@ type Repository interface {
 	ListIPSRSWorkOrders(ctx context.Context) ([]WorkOrderIPSRS, error)
 	CreateIPSRSWorkOrder(ctx context.Context, wo WorkOrderIPSRS) (WorkOrderIPSRS, error)
 	UpdateIPSRSWorkOrderStatus(ctx context.Context, id, status string) (WorkOrderIPSRS, error)
+
+	ListNutritionOrders(ctx context.Context) ([]NutritionOrder, error)
+	AdvanceNutritionOrder(ctx context.Context, id, actor string) (NutritionOrder, error)
+	ListCSSDBatches(ctx context.Context) ([]CSSDSterilizationBatch, error)
+	AdvanceCSSDBatch(ctx context.Context, id, actor string) (CSSDSterilizationBatch, error)
+	ListAmbulances(ctx context.Context) ([]AmbulanceUnit, error)
+	DispatchAmbulance(ctx context.Context, id, mission, actor string) (AmbulanceUnit, error)
+	ListParkingZones(ctx context.Context) ([]ParkingGateStatus, error)
 	ListClinics(ctx context.Context) ([]ClinicUnit, error)
 	ListPatients(ctx context.Context, query string) ([]Patient, error)
 	GetPatient(ctx context.Context, id string) (Patient, bool, error)

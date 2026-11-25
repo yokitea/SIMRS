@@ -85,6 +85,7 @@ func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 	direksiH, _ := auth.HashPassword("direksi123")
 	hrdH, _ := auth.HashPassword("hrd123")
 	ipsrsH, _ := auth.HashPassword("ipsrs123")
+	opsH, _ := auth.HashPassword("ops123")
 
 	s := &Server{
 		cfg:     cfg,
@@ -105,6 +106,7 @@ func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 			"direksi":      {Username: "direksi", Role: "DIREKSI", FullName: "dr. Budi Rahardjo, MARS", Hash: direksiH, Unit: "Direksi & Manajemen Eksekutif", NIP: "197509122000031001", Active: true},
 			"hrd":          {Username: "hrd", Role: "HRD", FullName: "Siti Rahmawati, S.Psi", Hash: hrdH, Unit: "Bagian SDM & Kredensial Medis", NIP: "199008252016022004", Active: true},
 			"ipsrs":        {Username: "ipsrs", Role: "IPSRS", FullName: "Ir. Bambang Prasetyo, ST", Hash: ipsrsH, Unit: "Instalasi Pemeliharaan Sarana RS (IPSRS)", NIP: "198604102011011009", Active: true},
+			"operasional":  {Username: "operasional", Role: "OPS", FullName: "Hendra Kusuma, A.Md", Hash: opsH, Unit: "Instalasi Gizi, CSSD & Transportasi RS", NIP: "198911202014031002", Active: true},
 		},
 		mux: http.NewServeMux(),
 	}
@@ -120,7 +122,7 @@ func (s *Server) Handler() http.Handler {
 func allowedWorkstationsForRole(role string) []string {
 	switch strings.ToUpper(strings.TrimSpace(role)) {
 	case "ADMIN":
-		return []string{"CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "IPSRS", "ADMIN"}
+		return []string{"CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "IPSRS", "OPS", "ADMIN"}
 	case "DOKTER":
 		return []string{"CLINIC", "RANAP"}
 	case "FARMASI":
@@ -132,11 +134,13 @@ func allowedWorkstationsForRole(role string) []string {
 	case "PERAWAT":
 		return []string{"RANAP"}
 	case "DIREKSI":
-		return []string{"EXECUTIVE", "RANAP", "IPSRS"}
+		return []string{"EXECUTIVE", "RANAP", "IPSRS", "OPS"}
 	case "HRD":
 		return []string{"HRD"}
 	case "IPSRS":
 		return []string{"IPSRS"}
+	case "OPS":
+		return []string{"OPS"}
 	default:
 		return []string{"CLINIC"}
 	}
@@ -209,6 +213,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/ipsrs/ipal/{id}/flush", anyAuth(s.handleFlushIPAL))
 	s.mux.HandleFunc("POST /api/v1/ipsrs/work-orders", anyAuth(s.handleCreateIPSRSWorkOrder))
 	s.mux.HandleFunc("POST /api/v1/ipsrs/work-orders/{id}/status", anyAuth(s.handleUpdateIPSRSWorkOrderStatus))
+	s.mux.HandleFunc("GET /api/v1/ops/overview", anyAuth(s.handleOpsOverview))
+	s.mux.HandleFunc("POST /api/v1/ops/nutrition/{id}/advance", anyAuth(s.handleAdvanceNutrition))
+	s.mux.HandleFunc("POST /api/v1/ops/cssd/{id}/advance", anyAuth(s.handleAdvanceCSSD))
+	s.mux.HandleFunc("POST /api/v1/ops/ambulances/{id}/dispatch", anyAuth(s.handleDispatchAmbulance))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -959,6 +967,82 @@ func (s *Server) handleUpdateIPSRSWorkOrderStatus(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"work_order": updated})
+}
+
+func (s *Server) handleOpsOverview(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	nutrition, err := s.repo.ListNutritionOrders(ctx)
+	if err != nil {
+		writeInternalErr(w, "ops nutrition", err)
+		return
+	}
+	cssd, err := s.repo.ListCSSDBatches(ctx)
+	if err != nil {
+		writeInternalErr(w, "ops cssd", err)
+		return
+	}
+	ambulances, err := s.repo.ListAmbulances(ctx)
+	if err != nil {
+		writeInternalErr(w, "ops ambulances", err)
+		return
+	}
+	parking, err := s.repo.ListParkingZones(ctx)
+	if err != nil {
+		writeInternalErr(w, "ops parking", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"nutrition_orders": nutrition,
+		"cssd_batches":     cssd,
+		"ambulances":       ambulances,
+		"parking_zones":    parking,
+	})
+}
+
+func (s *Server) handleAdvanceNutrition(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	actor := "operasional"
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
+		actor = claims.Name
+	}
+	updated, err := s.repo.AdvanceNutritionOrder(r.Context(), id, actor)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"order": updated})
+}
+
+func (s *Server) handleAdvanceCSSD(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	actor := "operasional"
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
+		actor = claims.Name
+	}
+	updated, err := s.repo.AdvanceCSSDBatch(r.Context(), id, actor)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"batch": updated})
+}
+
+func (s *Server) handleDispatchAmbulance(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Mission string `json:"mission"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	actor := "operasional"
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
+		actor = claims.Name
+	}
+	updated, err := s.repo.DispatchAmbulance(r.Context(), id, req.Mission, actor)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ambulance": updated})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

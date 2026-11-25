@@ -247,3 +247,71 @@ func TestExecutiveAndIPSRSWorkflows(t *testing.T) {
 		t.Fatalf("expected RESOLVED, got %s", woUpd.WorkOrder.Status)
 	}
 }
+
+func TestOpsPhase7Workflows(t *testing.T) {
+	repo := simrsstore.NewMemoryStore()
+	srv := NewServer(Config{BrandName: "Core SIMRS", HospitalName: "RS Demo", JWTSecret: "test_simrs_secret_at_least_32_bytes_ok"}, repo)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	opsTok := loginSIMRS(t, ts.URL, "operasional", "ops123")
+	resp := doAuthJSON(t, http.MethodGet, ts.URL+"/api/v1/ops/overview", opsTok, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ops overview failed: %d", resp.StatusCode)
+	}
+	var ov struct {
+		Nutrition []simrsstore.NutritionOrder         `json:"nutrition_orders"`
+		CSSD      []simrsstore.CSSDSterilizationBatch `json:"cssd_batches"`
+		Ambulance []simrsstore.AmbulanceUnit          `json:"ambulances"`
+		Parking   []simrsstore.ParkingGateStatus      `json:"parking_zones"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ov); err != nil {
+		t.Fatalf("decode ops overview: %v", err)
+	}
+	resp.Body.Close()
+	if len(ov.Nutrition) < 4 || len(ov.CSSD) < 4 || len(ov.Ambulance) < 3 || len(ov.Parking) < 3 {
+		t.Fatalf("incomplete ops seed: nut=%d cssd=%d amb=%d prk=%d", len(ov.Nutrition), len(ov.CSSD), len(ov.Ambulance), len(ov.Parking))
+	}
+
+	// Advance Nutrition NUT-01: DIRACIK -> DIANTAR
+	resp = doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/ops/nutrition/NUT-01/advance", opsTok, []byte(`{}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("advance nutrition failed: %d", resp.StatusCode)
+	}
+	var nutRes struct {
+		Order simrsstore.NutritionOrder `json:"order"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&nutRes)
+	resp.Body.Close()
+	if nutRes.Order.Status != "DIANTAR" {
+		t.Fatalf("expected DIANTAR, got %s", nutRes.Order.Status)
+	}
+
+	// Advance CSSD-01: STERILISASI -> STERIL_SIAP_PAKAI
+	resp = doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/ops/cssd/CSSD-01/advance", opsTok, []byte(`{}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("advance cssd failed: %d", resp.StatusCode)
+	}
+	var cssdRes struct {
+		Batch simrsstore.CSSDSterilizationBatch `json:"batch"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&cssdRes)
+	resp.Body.Close()
+	if cssdRes.Batch.Status != "STERIL_SIAP_PAKAI" || cssdRes.Batch.BioIndicator != "LULUS_SPORA" {
+		t.Fatalf("expected STERIL_SIAP_PAKAI + LULUS_SPORA, got %+v", cssdRes.Batch)
+	}
+
+	// Dispatch Ambulance AMB-01: STANDBY -> ON_DUTY
+	resp = doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/ops/ambulances/AMB-01/dispatch", opsTok, []byte(`{"mission":"Evakuasi Kecelakaan Tol"}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dispatch ambulance failed: %d", resp.StatusCode)
+	}
+	var ambRes struct {
+		Ambulance simrsstore.AmbulanceUnit `json:"ambulance"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&ambRes)
+	resp.Body.Close()
+	if ambRes.Ambulance.Status != "ON_DUTY" {
+		t.Fatalf("expected ON_DUTY, got %s", ambRes.Ambulance.Status)
+	}
+}

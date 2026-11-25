@@ -30,6 +30,10 @@ type MemoryStore struct {
 	utilityTelemetry []UtilityTelemetry
 	ipalSensors      []IPALGreaseSensor
 	ipsrsWorkOrders  []WorkOrderIPSRS
+	nutritionOrders  []NutritionOrder
+	cssdBatches      []CSSDSterilizationBatch
+	ambulances       []AmbulanceUnit
+	parkingZones     []ParkingGateStatus
 	seq              int64
 	auditSeq         int64
 }
@@ -401,6 +405,7 @@ func (m *MemoryStore) seedDefaults() {
 	_ = m.AppendAudit(ctx, "farmasi", "DISPENSE_RX", "FARMASI", "RX-20261124-0001", "Verifikasi KFA & penyerahan obat Azithromycin 500mg")
 	_ = m.AppendAudit(ctx, "kasir", "ISSUE_SEP", "BPJS", "0001R0011124V000001", "Penerbitan SEP Rawat Jalan & klaim INA-CBG")
 	m.seedIPSRS(now)
+	m.seedOps(now)
 	_ = m.AppendAudit(ctx, "kasir", "SETTLE_BILLING", "BILLING", "V-20261124-0001", "Pelunasan tagihan pasien BPJS")
 }
 
@@ -1333,4 +1338,189 @@ func (m *MemoryStore) UpdateIPSRSWorkOrderStatus(ctx context.Context, id, status
 		}
 	}
 	return WorkOrderIPSRS{}, errors.New("tiket work order tidak ditemukan")
+}
+
+func (m *MemoryStore) seedOps(now time.Time) {
+	ts := now.Format(time.RFC3339)
+	exp30 := now.AddDate(0, 0, 30).Format("2006-01-02")
+	m.nutritionOrders = []NutritionOrder{
+		{
+			ID: "NUT-01", PatientName: "Tn. Budi Santoso", WardRoom: "Paviliun Anggrek VIP-101",
+			DietType: "TKTP (Tinggi Kalori Tinggi Protein)", MealSlot: "SIANG", Allergies: "Tidak ada",
+			CaloriesKcal: 2100, Status: "DIRACIK", UpdatedAt: ts,
+		},
+		{
+			ID: "NUT-02", PatientName: "Ny. Siti Aminah", WardRoom: "Ruang Melati K2-301",
+			DietType: "DIET DM 1700 kkal (Rendah Gula)", MealSlot: "SIANG", Allergies: "Seafood / Udang",
+			CaloriesKcal: 1700, Status: "DIANTAR", UpdatedAt: ts,
+		},
+		{
+			ID: "NUT-03", PatientName: "Tn. Agus Salim", WardRoom: "ICU Sentral Bed-01",
+			DietType: "CAIR NGT (Enteral Formula)", MealSlot: "SIANG", Allergies: "Laktosa",
+			CaloriesKcal: 1500, Status: "DIRACIK", UpdatedAt: ts,
+		},
+		{
+			ID: "NUT-04", PatientName: "Ny. Ratna Dewi", WardRoom: "Ruang Kenanga K3-401",
+			DietType: "RENDAH GARAM II (Hipertensi)", MealSlot: "SIANG", Allergies: "Tidak ada",
+			CaloriesKcal: 1850, Status: "DITERIMA_PASIEN", UpdatedAt: ts,
+		},
+	}
+
+	m.cssdBatches = []CSSDSterilizationBatch{
+		{
+			ID: "CSSD-01", BatchNo: "ST-20261125-01", SetName: "Set Bedah Mayor Laparatomi (42 Instrumen)",
+			UnitOrigin: "Kamar Operasi OK-1", Method: "AUTOCLAVE_134C", TempC: 134.2, PressureBar: 2.1,
+			BioIndicator: "PROSES", Status: "STERILISASI", ExpiresAt: exp30,
+		},
+		{
+			ID: "CSSD-02", BatchNo: "ST-20261125-02", SetName: "Set Hecting & Jahit Luka IGD (5 Pack)",
+			UnitOrigin: "IGD Zona Bedah", Method: "AUTOCLAVE_134C", TempC: 134.0, PressureBar: 2.0,
+			BioIndicator: "LULUS_SPORA", Status: "STERIL_SIAP_PAKAI", ExpiresAt: exp30,
+		},
+		{
+			ID: "CSSD-03", BatchNo: "ST-20261125-03", SetName: "Handpiece & Set Konservasi Gigi",
+			UnitOrigin: "Poli Gigi & Mulut", Method: "PLASMA_H2O2", TempC: 52.0, PressureBar: 0.8,
+			BioIndicator: "PROSES", Status: "DEKONTAMINASI", ExpiresAt: exp30,
+		},
+		{
+			ID: "CSSD-04", BatchNo: "ST-20261125-04", SetName: "Set Partus & Kuretase Obgyn",
+			UnitOrigin: "VK / Kebidanan", Method: "AUTOCLAVE_134C", TempC: 134.1, PressureBar: 2.1,
+			BioIndicator: "LULUS_SPORA", Status: "STERIL_SIAP_PAKAI", ExpiresAt: exp30,
+		},
+	}
+
+	m.ambulances = []AmbulanceUnit{
+		{
+			ID: "AMB-01", PlateNo: "B 1190 RSX", UnitName: "Ambulans Advance ICU #1",
+			Type: "EMERGENCY_ICU", DriverName: "Pak Joko Susilo", ParamedicName: "Ns. Raka, S.Kep",
+			Status: "STANDBY", CurrentMission: "Siaga Parkir IGD Zona Utara", FuelPct: 92, OxygenBar: 145,
+		},
+		{
+			ID: "AMB-02", PlateNo: "B 1191 RSX", UnitName: "Ambulans Evakuasi #2",
+			Type: "EVAKUASI", DriverName: "Pak Dedi Kurniawan", ParamedicName: "Ns. Tari, A.Md.Kep",
+			Status: "ON_DUTY", CurrentMission: "Rujukan Pasien Kardiologi -> RS Jantung Harapan", FuelPct: 74, OxygenBar: 120,
+		},
+		{
+			ID: "AMB-03", PlateNo: "B 1192 RSX", UnitName: "Ambulans Jenazah #3",
+			Type: "JENAZAH", DriverName: "Pak Hendri", ParamedicName: "Petugas Pemulasaraan",
+			Status: "STANDBY", CurrentMission: "Siaga Garasi Timur", FuelPct: 85, OxygenBar: 0,
+		},
+	}
+
+	m.parkingZones = []ParkingGateStatus{
+		{
+			ID: "PRK-01", ZoneName: "Gedung Parkir Utama (Mobil Pasien)", VehicleType: "MOBIL",
+			TotalSlots: 180, OccupiedSlots: 142, GateStatus: "OPEN_AUTO", DailyRevenue: 4850000,
+		},
+		{
+			ID: "PRK-02", ZoneName: "Area Parkir Roda Dua (Motor)", VehicleType: "MOTOR",
+			TotalSlots: 320, OccupiedSlots: 298, GateStatus: "OPEN_AUTO", DailyRevenue: 2140000,
+		},
+		{
+			ID: "PRK-03", ZoneName: "Zona Khusus Dokter & IGD Drop-off", VehicleType: "VIP_DOKTER",
+			TotalSlots: 45, OccupiedSlots: 31, GateStatus: "OPEN_AUTO", DailyRevenue: 0,
+		},
+	}
+}
+
+func (m *MemoryStore) ListNutritionOrders(_ context.Context) ([]NutritionOrder, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]NutritionOrder, len(m.nutritionOrders))
+	copy(out, m.nutritionOrders)
+	return out, nil
+}
+
+func (m *MemoryStore) AdvanceNutritionOrder(ctx context.Context, id, actor string) (NutritionOrder, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.nutritionOrders {
+		if m.nutritionOrders[i].ID == id {
+			switch m.nutritionOrders[i].Status {
+			case "DIRACIK":
+				m.nutritionOrders[i].Status = "DIANTAR"
+			case "DIANTAR":
+				m.nutritionOrders[i].Status = "DITERIMA_PASIEN"
+			}
+			m.nutritionOrders[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			updated := m.nutritionOrders[i]
+			m.mu.Unlock()
+			_ = m.AppendAudit(ctx, actor, "ADVANCE_NUTRITION", "GIZI", updated.ID, fmt.Sprintf("Diet %s (%s) -> %s", updated.PatientName, updated.WardRoom, updated.Status))
+			m.mu.Lock()
+			return updated, nil
+		}
+	}
+	return NutritionOrder{}, errors.New("order diet gizi tidak ditemukan")
+}
+
+func (m *MemoryStore) ListCSSDBatches(_ context.Context) ([]CSSDSterilizationBatch, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]CSSDSterilizationBatch, len(m.cssdBatches))
+	copy(out, m.cssdBatches)
+	return out, nil
+}
+
+func (m *MemoryStore) AdvanceCSSDBatch(ctx context.Context, id, actor string) (CSSDSterilizationBatch, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.cssdBatches {
+		if m.cssdBatches[i].ID == id {
+			switch m.cssdBatches[i].Status {
+			case "DEKONTAMINASI":
+				m.cssdBatches[i].Status = "STERILISASI"
+			case "STERILISASI":
+				m.cssdBatches[i].Status = "STERIL_SIAP_PAKAI"
+				m.cssdBatches[i].BioIndicator = "LULUS_SPORA"
+			}
+			updated := m.cssdBatches[i]
+			m.mu.Unlock()
+			_ = m.AppendAudit(ctx, actor, "ADVANCE_CSSD", "CSSD", updated.BatchNo, fmt.Sprintf("%s -> %s (%s)", updated.SetName, updated.Status, updated.BioIndicator))
+			m.mu.Lock()
+			return updated, nil
+		}
+	}
+	return CSSDSterilizationBatch{}, errors.New("batch CSSD tidak ditemukan")
+}
+
+func (m *MemoryStore) ListAmbulances(_ context.Context) ([]AmbulanceUnit, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]AmbulanceUnit, len(m.ambulances))
+	copy(out, m.ambulances)
+	return out, nil
+}
+
+func (m *MemoryStore) DispatchAmbulance(ctx context.Context, id, mission, actor string) (AmbulanceUnit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.ambulances {
+		if m.ambulances[i].ID == id {
+			if m.ambulances[i].Status == "STANDBY" {
+				m.ambulances[i].Status = "ON_DUTY"
+				if strings.TrimSpace(mission) != "" {
+					m.ambulances[i].CurrentMission = strings.TrimSpace(mission)
+				} else {
+					m.ambulances[i].CurrentMission = "Penjemputan Gawat Darurat / Rujukan"
+				}
+			} else {
+				m.ambulances[i].Status = "STANDBY"
+				m.ambulances[i].CurrentMission = "Kembali Siaga di Posko IGD"
+			}
+			updated := m.ambulances[i]
+			m.mu.Unlock()
+			_ = m.AppendAudit(ctx, actor, "DISPATCH_AMBULANCE", "AMBULANCE", updated.PlateNo, fmt.Sprintf("%s -> %s (%s)", updated.UnitName, updated.Status, updated.CurrentMission))
+			m.mu.Lock()
+			return updated, nil
+		}
+	}
+	return AmbulanceUnit{}, errors.New("unit ambulans tidak ditemukan")
+}
+
+func (m *MemoryStore) ListParkingZones(_ context.Context) ([]ParkingGateStatus, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]ParkingGateStatus, len(m.parkingZones))
+	copy(out, m.parkingZones)
+	return out, nil
 }

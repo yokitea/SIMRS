@@ -655,3 +655,31 @@ func (p *PostgresStore) CreateIPSRSWorkOrder(ctx context.Context, wo WorkOrderIP
 func (p *PostgresStore) UpdateIPSRSWorkOrderStatus(ctx context.Context, id, status string) (WorkOrderIPSRS, error) {
 	return pgIPSRSFallback.UpdateIPSRSWorkOrderStatus(ctx, id, status)
 }
+
+func (p *PostgresStore) ListNutritionOrders(ctx context.Context) ([]NutritionOrder, error) {
+	return pgIPSRSFallback.ListNutritionOrders(ctx)
+}
+
+func (p *PostgresStore) AdvanceNutritionOrder(ctx context.Context, id, actor string) (NutritionOrder, error) {
+	return pgIPSRSFallback.AdvanceNutritionOrder(ctx, id, actor)
+}
+
+func (p *PostgresStore) ListCSSDBatches(ctx context.Context) ([]CSSDSterilizationBatch, error) {
+	return pgIPSRSFallback.ListCSSDBatches(ctx)
+}
+
+func (p *PostgresStore) AdvanceCSSDBatch(ctx context.Context, id, actor string) (CSSDSterilizationBatch, error) {
+	return pgIPSRSFallback.AdvanceCSSDBatch(ctx, id, actor)
+}
+
+func (p *PostgresStore) ListAmbulances(ctx context.Context) ([]AmbulanceUnit, error) {
+	return pgIPSRSFallback.ListAmbulances(ctx)
+}
+
+func (p *PostgresStore) DispatchAmbulance(ctx context.Context, id, mission, actor string) (AmbulanceUnit, error) {
+	return pgIPSRSFallback.DispatchAmbulance(ctx, id, mission, actor)
+}
+
+func (p *PostgresStore) ListParkingZones(ctx context.Context) ([]ParkingGateStatus, error) {
+	return pgIPSRSFallback.ListParkingZones(ctx)
+}

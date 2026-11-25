@@ -300,6 +300,61 @@ export interface IPSRSOverview {
   work_orders: WorkOrderIPSRS[];
 }
 
+export interface NutritionOrder {
+  id: string;
+  patient_name: string;
+  ward_room: string;
+  diet_type: string;
+  meal_slot: string;
+  allergies: string;
+  calories_kcal: number;
+  status: string;
+  updated_at: string;
+}
+
+export interface CSSDSterilizationBatch {
+  id: string;
+  batch_no: string;
+  set_name: string;
+  unit_origin: string;
+  method: string;
+  temp_c: number;
+  pressure_bar: number;
+  bio_indicator: string;
+  status: string;
+  expires_at: string;
+}
+
+export interface AmbulanceUnit {
+  id: string;
+  plate_no: string;
+  unit_name: string;
+  type: string;
+  driver_name: string;
+  paramedic_name: string;
+  status: string;
+  current_mission: string;
+  fuel_pct: number;
+  oxygen_bar: number;
+}
+
+export interface ParkingGateStatus {
+  id: string;
+  zone_name: string;
+  vehicle_type: string;
+  total_slots: number;
+  occupied_slots: number;
+  gate_status: string;
+  daily_revenue: number;
+}
+
+export interface OpsOverview {
+  nutrition_orders: NutritionOrder[];
+  cssd_batches: CSSDSterilizationBatch[];
+  ambulances: AmbulanceUnit[];
+  parking_zones: ParkingGateStatus[];
+}
+
 export type WorkstationType =
   | "CLINIC"
   | "PHARMACY"
@@ -309,6 +364,7 @@ export type WorkstationType =
   | "EXECUTIVE"
   | "HRD"
   | "IPSRS"
+  | "OPS"
   | "ADMIN";
 
 export interface WorkstationMeta {
@@ -394,6 +450,15 @@ export const WORKSTATIONS: Record<WorkstationType, WorkstationMeta> = {
     description: "Kalibrasi alat kesehatan (Permenkes 40/2022), gas medis sentral & tabung O2 cadangan, HVAC, Genset, serta sensor grease trap IPAL.",
     allowedRoles: ["IPSRS", "DIREKSI", "ADMIN"],
   },
+  OPS: {
+    id: "OPS",
+    title: "Workstation Gizi, CSSD, Ambulans & Parkir",
+    department: "Instalasi Gizi, Sterilisasi & Transportasi RS",
+    badge: "Hospital Support & Logistics",
+    icon: "🚑",
+    description: "Distribusi diet gizi pasien rawat inap, pelacakan batch sterilisasi CSSD, dispatch armada ambulans, dan okupansi gerbang parkir RS.",
+    allowedRoles: ["OPS", "DIREKSI", "ADMIN"],
+  },
   ADMIN: {
     id: "ADMIN",
     title: "Workstation Administrator IT & IAM",
@@ -408,7 +473,7 @@ export const WORKSTATIONS: Record<WorkstationType, WorkstationMeta> = {
 export function getAllowedWorkstations(role: string): WorkstationType[] {
   const r = (role || "").toUpperCase();
   if (r === "ADMIN") {
-    return ["CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "IPSRS", "ADMIN"];
+    return ["CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "IPSRS", "OPS", "ADMIN"];
   }
   return (Object.keys(WORKSTATIONS) as WorkstationType[]).filter((key) =>
     WORKSTATIONS[key].allowedRoles.includes(r)
@@ -439,6 +504,7 @@ export function getDefaultWorkstation(
   if (r === "DIREKSI") return { ws: "EXECUTIVE", tab: "executive" };
   if (r === "HRD") return { ws: "HRD", tab: "hrd" };
   if (r === "IPSRS") return { ws: "IPSRS", tab: "ipsrs" };
+  if (r === "OPS") return { ws: "OPS", tab: "ops" };
   return { ws: "ADMIN", tab: "admin" };
 }
 
