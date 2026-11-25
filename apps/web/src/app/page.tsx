@@ -24,6 +24,7 @@ import {
   ClinicUnit,
   ExecutiveMetrics,
   StaffCredential,
+  IPSRSOverview,
   WorkstationType,
   WORKSTATIONS,
   getAllowedWorkstations,
@@ -38,6 +39,7 @@ import PrescriptionReviewModal from "@/components/pharmacy/PrescriptionReviewMod
 import PaymentModal from "@/components/billing/PaymentModal";
 import AccountingAuditPanel from "@/components/billing/AccountingAuditPanel";
 import ExecutiveDashboard from "@/components/executive/ExecutiveDashboard";
+import IPSRSDashboard from "@/components/ipsrs/IPSRSDashboard";
 
 const DEFAULT_CLINICS: ClinicUnit[] = [
   { code: "POLI-UMUM", name: "Poli Umum", specialty: "Pelayanan Medis Dasar / Dokter Umum", bpjs_poli_code: "UMU", room_number: "R.101", floor: "Lantai 1 Dasar", default_doctor: "dr. Ahmad Fauzi", doctor_list: ["dr. Ahmad Fauzi", "dr. Rina Kusuma"], operating_hours: "07:30 - 21:00 WIB" },
@@ -56,7 +58,7 @@ const DEFAULT_CLINICS: ClinicUnit[] = [
   { code: "RAWAT-INAP", name: "Instalasi Rawat Inap", specialty: "Bangsal Perawatan & Intensive Care (ICU)", bpjs_poli_code: "RANAP", room_number: "Paviliun Anggrek & Melati", floor: "Lantai 3 & 4", default_doctor: "dr. Hendra Wijaya, Sp.PD", doctor_list: ["dr. Hendra Wijaya, Sp.PD", "dr. Farhan Malik, Sp.S"], operating_hours: "24 Jam Non-Stop" },
 ];
 
-type Tab = "admisi" | "rme" | "ranap" | "farmasi" | "kasir" | "outbox" | "admin" | "executive" | "hrd";
+type Tab = "admisi" | "rme" | "ranap" | "farmasi" | "kasir" | "outbox" | "admin" | "executive" | "hrd" | "ipsrs";
 
 export default function SIMRSConsolePage() {
   const [token, setToken] = useState("");
@@ -66,6 +68,7 @@ export default function SIMRSConsolePage() {
   const [activeWorkstation, setActiveWorkstation] = useState<WorkstationType>("CLINIC");
   const [executiveMetrics, setExecutiveMetrics] = useState<ExecutiveMetrics | null>(null);
   const [staffCredentials, setStaffCredentials] = useState<StaffCredential[]>([]);
+  const [ipsrsData, setIpsrsData] = useState<IPSRSOverview | null>(null);
   const [loginUser, setLoginUser] = useState("admin");
   const [loginPass, setLoginPass] = useState("admin123");
   const [loginErr, setLoginErr] = useState("");
@@ -157,7 +160,7 @@ export default function SIMRSConsolePage() {
     if (!tok) return;
     const h = { headers: authHeaders() };
     try {
-      const [dRes, pRes, vRes, bRes, mRes, rxRes, rRes, bilRes, oRes, uRes, aRes, cRes, execRes, hrdRes] = await Promise.all([
+      const [dRes, pRes, vRes, bRes, mRes, rxRes, rRes, bilRes, oRes, uRes, aRes, cRes, execRes, hrdRes, ipsrsRes] = await Promise.all([
         fetch(`${SIMRS_API_URL}/api/v1/dashboard`, h),
         fetch(`${SIMRS_API_URL}/api/v1/patients`, h),
         fetch(`${SIMRS_API_URL}/api/v1/visits`, h),
@@ -172,6 +175,7 @@ export default function SIMRSConsolePage() {
         fetch(`${SIMRS_API_URL}/api/v1/clinics`, h),
         fetch(`${SIMRS_API_URL}/api/v1/executive/metrics`, h),
         fetch(`${SIMRS_API_URL}/api/v1/hrd/credentials`, h),
+        fetch(`${SIMRS_API_URL}/api/v1/ipsrs/overview`, h),
       ]);
       if (dRes.status === 401) {
         localStorage.removeItem("simrs_jwt");
@@ -210,6 +214,9 @@ export default function SIMRSConsolePage() {
       if (hrdRes && hrdRes.ok) {
         const hj = await hrdRes.json();
         if (hj.credentials) setStaffCredentials(hj.credentials);
+      }
+      if (ipsrsRes && ipsrsRes.ok) {
+        setIpsrsData(await ipsrsRes.json());
       }
     } catch {
       notify("Gagal menghubungi SIMRS API (" + SIMRS_API_URL + ")");
@@ -305,6 +312,7 @@ export default function SIMRSConsolePage() {
       else if (ws === "RANAP") setTab("ranap");
       else if (ws === "EXECUTIVE") setTab("executive");
       else if (ws === "HRD") setTab("hrd");
+      else if (ws === "IPSRS") setTab("ipsrs");
       else if (ws === "ADMIN") setTab("admin");
       notify(`Workstation beralih ke: ${WORKSTATIONS[ws]?.title}`);
     },
@@ -348,6 +356,7 @@ export default function SIMRSConsolePage() {
       else if (targetWs === "RANAP") setTab("ranap");
       else if (targetWs === "EXECUTIVE") setTab("executive");
       else if (targetWs === "HRD") setTab("hrd");
+      else if (targetWs === "IPSRS") setTab("ipsrs");
       else if (targetWs === "ADMIN") setTab("admin");
     }
   }, []);
@@ -626,6 +635,7 @@ export default function SIMRSConsolePage() {
                 { label: "Perawat", u: "perawat", p: "perawat123", color: "#ec4899" },
                 { label: "Direksi", u: "direksi", p: "direksi123", color: "#e11d48" },
                 { label: "SDM/HRD", u: "hrd", p: "hrd123", color: "#a855f7" },
+                { label: "IPSRS/Utility", u: "ipsrs", p: "ipsrs123", color: "#f59e0b" },
               ].map((c) => (
                 <button
                   key={c.u}
@@ -722,12 +732,21 @@ export default function SIMRSConsolePage() {
               <button className={`tab-btn ${tab === "ranap" ? "active" : ""}`} onClick={() => setTab("ranap")}>
                 🛏️ Bangsal & Tempat Tidur ({dashboard?.stats.beds_occupied ?? 0}/{beds.length})
               </button>
+              <button className={`tab-btn ${tab === "ipsrs" ? "active" : ""}`} onClick={() => setTab("ipsrs")}>
+                🔧 IPSRS &amp; IPAL
+              </button>
             </>
           )}
 
           {activeWorkstation === "HRD" && (
             <button className={`tab-btn ${tab === "hrd" ? "active" : ""}`} onClick={() => setTab("hrd")}>
               👥 SDM & Kredensial Medis ({staffCredentials.length || 6})
+            </button>
+          )}
+
+          {activeWorkstation === "IPSRS" && (
+            <button className={`tab-btn ${tab === "ipsrs" ? "active" : ""}`} onClick={() => setTab("ipsrs")}>
+              🔧 IPSRS, Kalibrasi Alkes &amp; IPAL IoT
             </button>
           )}
 
@@ -756,6 +775,9 @@ export default function SIMRSConsolePage() {
               </button>
               <button className={`tab-btn ${tab === "hrd" ? "active" : ""}`} onClick={() => setTab("hrd")}>
                 SDM
+              </button>
+              <button className={`tab-btn ${tab === "ipsrs" ? "active" : ""}`} onClick={() => setTab("ipsrs")}>
+                IPSRS
               </button>
               <button className={`tab-btn ${tab === "outbox" ? "active" : ""}`} onClick={() => setTab("outbox")}>
                 SATUSEHAT & RIS ({outbox.length})
@@ -2761,6 +2783,15 @@ export default function SIMRSConsolePage() {
               </div>
             </section>
           </div>
+        )}
+
+        {/* TAB 10: IPSRS, KALIBRASI ALKES, UTILITY & IPAL IOT */}
+        {tab === "ipsrs" && (
+          <IPSRSDashboard
+            data={ipsrsData}
+            onRefresh={loadAll}
+            onNotify={notify}
+          />
         )}
 
         {/* MODAL: TELAAH RESEP 3 PILAR KEMENKES */}

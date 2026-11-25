@@ -23,11 +23,15 @@ type MemoryStore struct {
 	medications   map[string]*Medication
 	prescriptions map[string]*Prescription
 	billing       map[string][]*BillingItem
-	outbox        []OutboxItem
-	audits        []AuditLog
-	clinics       []ClinicUnit
-	seq           int64
-	auditSeq      int64
+	outbox           []OutboxItem
+	audits           []AuditLog
+	clinics          []ClinicUnit
+	medicalAssets    []MedicalAsset
+	utilityTelemetry []UtilityTelemetry
+	ipalSensors      []IPALGreaseSensor
+	ipsrsWorkOrders  []WorkOrderIPSRS
+	seq              int64
+	auditSeq         int64
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -396,6 +400,7 @@ func (m *MemoryStore) seedDefaults() {
 	_ = m.AppendAudit(ctx, "radiolog", "FINAL_REPORT", "RME", "ACC-20261124-0001", "Finalisasi hasil ekspertise radiologi")
 	_ = m.AppendAudit(ctx, "farmasi", "DISPENSE_RX", "FARMASI", "RX-20261124-0001", "Verifikasi KFA & penyerahan obat Azithromycin 500mg")
 	_ = m.AppendAudit(ctx, "kasir", "ISSUE_SEP", "BPJS", "0001R0011124V000001", "Penerbitan SEP Rawat Jalan & klaim INA-CBG")
+	m.seedIPSRS(now)
 	_ = m.AppendAudit(ctx, "kasir", "SETTLE_BILLING", "BILLING", "V-20261124-0001", "Pelunasan tagihan pasien BPJS")
 }
 
@@ -1094,4 +1099,238 @@ func (m *MemoryStore) ListStaffCredentials(_ context.Context) ([]StaffCredential
 			ClinicalPrivilege: "Asuhan Keperawatan Komprehensif & Tindakan Invasif Dasar (SPK/RKK-06)", Status: "KRITIS_30_HARI",
 		},
 	}, nil
+}
+
+func (m *MemoryStore) seedIPSRS(now time.Time) {
+	ts := now.Format(time.RFC3339)
+	m.medicalAssets = []MedicalAsset{
+		{
+			ID: "ALK-01", AssetCode: "EM-ICU-001", Name: "Ventilator ICU Mindray SV600",
+			Category: "LIFE_SUPPORT", Location: "ICU Sentral Bed 01", BrandModel: "Mindray SV600",
+			SerialNumber: "SN-SV600-8821", LastCalibration: "2026-06-15", NextCalibration: "2026-12-15",
+			CalibrationStatus: "MENDEKATI_JATUH_TEMPO", PPMIntervalDays: 180,
+		},
+		{
+			ID: "ALK-02", AssetCode: "RAD-CT-001", Name: "CT-Scan 128 Slice",
+			Category: "RADIOLOGY", Location: "Instalasi Radiologi R.CT", BrandModel: "Siemens SOMATOM go.Top",
+			SerialNumber: "SN-CT128-4410", LastCalibration: "2026-09-01", NextCalibration: "2027-09-01",
+			CalibrationStatus: "LAIK_PAKAI", PPMIntervalDays: 365,
+		},
+		{
+			ID: "ALK-03", AssetCode: "EM-IGD-004", Name: "Defibrillator Biphasic + AED",
+			Category: "LIFE_SUPPORT", Location: "IGD Zona Resusitasi Merah", BrandModel: "Zoll R-Series Plus",
+			SerialNumber: "SN-ZOLL-1903", LastCalibration: "2025-11-10", NextCalibration: "2026-11-10",
+			CalibrationStatus: "LEWAT_JATUH_TEMPO", PPMIntervalDays: 365,
+		},
+		{
+			ID: "ALK-04", AssetCode: "EM-OK-002", Name: "Mesin Anestesi Modular",
+			Category: "ELECTROMEDIC", Location: "Kamar Operasi OK-1", BrandModel: "Dräger Primus",
+			SerialNumber: "SN-DRG-5529", LastCalibration: "2026-08-20", NextCalibration: "2027-08-20",
+			CalibrationStatus: "LAIK_PAKAI", PPMIntervalDays: 365,
+		},
+		{
+			ID: "ALK-05", AssetCode: "EM-OBG-001", Name: "USG 4D Doppler ObGyn",
+			Category: "ELECTROMEDIC", Location: "Poli Kebidanan R.212", BrandModel: "GE Voluson E10",
+			SerialNumber: "SN-GE-7741", LastCalibration: "2026-07-05", NextCalibration: "2027-07-05",
+			CalibrationStatus: "LAIK_PAKAI", PPMIntervalDays: 365,
+		},
+		{
+			ID: "ALK-06", AssetCode: "EM-ICU-005", Name: "Patient Monitor 5-Parameter",
+			Category: "ELECTROMEDIC", Location: "Paviliun Anggrek VIP-101", BrandModel: "Mindray iMEC10",
+			SerialNumber: "SN-IMEC-3302", LastCalibration: "2026-06-01", NextCalibration: "2026-12-01",
+			CalibrationStatus: "MENDEKATI_JATUH_TEMPO", PPMIntervalDays: 180,
+		},
+	}
+
+	m.utilityTelemetry = []UtilityTelemetry{
+		{
+			ID: "UTL-01", SystemName: "Oksigen Sentral (Liquid VIE Tank)", Category: "GAS_MEDIS",
+			Location: "Area Gas Medis Belakang", MetricLabel: "Level Tangki & Tekanan Manifold",
+			CurrentValue: "82% • 4.6 Bar", ThresholdInfo: "Min 30% • 4.0–5.0 Bar",
+			BackupStock: "24 Tabung O2 6m³ Cadangan Penuh", Status: "NORMAL", UpdatedAt: ts,
+		},
+		{
+			ID: "UTL-02", SystemName: "Medical Compressed Air & Vacuum", Category: "GAS_MEDIS",
+			Location: "Ruang Kompresor Sentral", MetricLabel: "Tekanan Output & Suction",
+			CurrentValue: "4.2 Bar / -520 mmHg", ThresholdInfo: "4.0 Bar / -450 mmHg",
+			BackupStock: "Dual Redundant Compressor Aktif", Status: "NORMAL", UpdatedAt: ts,
+		},
+		{
+			ID: "UTL-03", SystemName: "HVAC Ruang Isolasi & Kamar Operasi", Category: "HVAC",
+			Location: "Lt. 3 Isolasi & OK Sentral", MetricLabel: "Tekanan Diferensial & HEPA",
+			CurrentValue: "-15 Pa (Isolasi) / +18 Pa (OK)", ThresholdInfo: "Isolasi <= -15 Pa • OK >= +15 Pa",
+			BackupStock: "HEPA Filter Efficiency 99.97%", Status: "NORMAL", UpdatedAt: ts,
+		},
+		{
+			ID: "UTL-04", SystemName: "Chiller AC Central Gedung Utama", Category: "HVAC",
+			Location: "Rooftop Gedung A", MetricLabel: "Suhu Supply & Beban Kompresor",
+			CurrentValue: "7.8°C • Beban 88%", ThresholdInfo: "6.0–8.5°C • Maks 90%",
+			BackupStock: "Chiller #2 Standby Auto-Switch", Status: "WASPADA", UpdatedAt: ts,
+		},
+		{
+			ID: "UTL-05", SystemName: "Genset Utama 1000 kVA + ATS", Category: "LISTRIK",
+			Location: "Power House RS", MetricLabel: "Kapasitas Solar & Waktu Transfer",
+			CurrentValue: "Solar 91% • ATS < 8 dtk", ThresholdInfo: "Min Solar 50% • KARS < 10 dtk",
+			BackupStock: "UPS ICU & OK: 100% (45 mnt)", Status: "NORMAL", UpdatedAt: ts,
+		},
+		{
+			ID: "UTL-06", SystemName: "Water Treatment Plant (RO Hemodialisa)", Category: "AIR_BERSIH",
+			Location: "Unit Hemodialisa & Boiler", MetricLabel: "TDS Output & Klorinasi",
+			CurrentValue: "TDS 4 ppm • pH 7.1", ThresholdInfo: "Maks TDS 10 ppm (AAMI)",
+			BackupStock: "Reservoir Ground Tank 120.000 L", Status: "NORMAL", UpdatedAt: ts,
+		},
+	}
+
+	m.ipalSensors = []IPALGreaseSensor{
+		{
+			ID: "IPAL-01", ZoneName: "Grease Trap Dapur Gizi Utama", SensorType: "GREASE_TRAP",
+			LevelPct: 84, PHValue: 6.4, TempC: 34.2, Status: "BUTUH_KURAS",
+			LastCleanedAt: "2026-11-10T08:00:00Z", Notes: "Akumulasi lemak > 80% — berisiko sumbat pipa & bau jika tidak segera dikuras",
+		},
+		{
+			ID: "IPAL-02", ZoneName: "Grease Trap Laundry & CSSD", SensorType: "GREASE_TRAP",
+			LevelPct: 38, PHValue: 7.4, TempC: 31.0, Status: "OPTIMAL",
+			LastCleanedAt: "2026-11-20T09:30:00Z", Notes: "Aliran lancar, filter deterjen & lemak dalam batas aman",
+		},
+		{
+			ID: "IPAL-03", ZoneName: "Bak Aerasi & Biofilter IPAL Sentral", SensorType: "BOD_COD",
+			LevelPct: 52, PHValue: 7.2, TempC: 29.5, Status: "OPTIMAL",
+			LastCleanedAt: "2026-11-18T14:00:00Z", Notes: "DO 4.2 mg/L, COD 42 mg/L (Baku Mutu KLHK < 80 mg/L)",
+		},
+		{
+			ID: "IPAL-04", ZoneName: "Outlet Effluent & Desinfeksi Klorin", SensorType: "PH_OUTLET",
+			LevelPct: 45, PHValue: 7.1, TempC: 28.8, Status: "OPTIMAL",
+			LastCleanedAt: "2026-11-22T07:15:00Z", Notes: "Debit 64 m³/hari • Aman dibuang ke saluran kota",
+		},
+	}
+
+	m.ipsrsWorkOrders = []WorkOrderIPSRS{
+		{
+			ID: "WO-01", TicketNo: "WO-IPSRS-2026-001", AssetOrZone: "Grease Trap Dapur Gizi Utama",
+			IssueType: "IPAL_KURAS", Priority: "TINGGI", Technician: "Tim Sanitasi & IPSRS",
+			Status: "OPEN", Notes: "Sensor ultrasonik mendeteksi ketebalan lemak 84%. Jadwalkan sedot grease trap hari ini.",
+			CreatedAt: ts,
+		},
+		{
+			ID: "WO-02", TicketNo: "WO-IPSRS-2026-002", AssetOrZone: "Defibrillator Biphasic + AED (IGD)",
+			IssueType: "KALIBRASI", Priority: "DARURAT", Technician: "Teknisi Elektromedik (ATEM)",
+			Status: "IN_PROGRESS", Notes: "Lewat jatuh tempo kalibrasi BPFK. Pengujian joule & baterai sedang berlangsung.",
+			CreatedAt: ts,
+		},
+		{
+			ID: "WO-03", TicketNo: "WO-IPSRS-2026-003", AssetOrZone: "Chiller AC Central Gedung Utama",
+			IssueType: "PREVENTIVE", Priority: "SEDANG", Technician: "Teknisi HVAC & Mekanikal",
+			Status: "OPEN", Notes: "Beban kompresor mencapai 88%, bersihkan kondensor & cek tekanan freon.",
+			CreatedAt: ts,
+		},
+	}
+}
+
+func (m *MemoryStore) ListMedicalAssets(_ context.Context) ([]MedicalAsset, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]MedicalAsset, len(m.medicalAssets))
+	copy(out, m.medicalAssets)
+	return out, nil
+}
+
+func (m *MemoryStore) CalibrateMedicalAsset(ctx context.Context, id, technician, nextDate string) (MedicalAsset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	today := time.Now().UTC().Format("2006-01-02")
+	for i := range m.medicalAssets {
+		if m.medicalAssets[i].ID == id {
+			m.medicalAssets[i].LastCalibration = today
+			if strings.TrimSpace(nextDate) != "" {
+				m.medicalAssets[i].NextCalibration = strings.TrimSpace(nextDate)
+			} else {
+				m.medicalAssets[i].NextCalibration = time.Now().UTC().AddDate(0, 0, m.medicalAssets[i].PPMIntervalDays).Format("2006-01-02")
+			}
+			m.medicalAssets[i].CalibrationStatus = "LAIK_PAKAI"
+			updated := m.medicalAssets[i]
+			m.mu.Unlock()
+			_ = m.AppendAudit(ctx, technician, "CALIBRATE_ASSET", "IPSRS_ASSET", updated.AssetCode, fmt.Sprintf("Kalibrasi %s selesai, berlaku s.d. %s", updated.Name, updated.NextCalibration))
+			m.mu.Lock()
+			return updated, nil
+		}
+	}
+	return MedicalAsset{}, errors.New("aset medis tidak ditemukan")
+}
+
+func (m *MemoryStore) ListUtilityTelemetry(_ context.Context) ([]UtilityTelemetry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]UtilityTelemetry, len(m.utilityTelemetry))
+	copy(out, m.utilityTelemetry)
+	return out, nil
+}
+
+func (m *MemoryStore) ListIPALSensors(_ context.Context) ([]IPALGreaseSensor, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]IPALGreaseSensor, len(m.ipalSensors))
+	copy(out, m.ipalSensors)
+	return out, nil
+}
+
+func (m *MemoryStore) FlushGreaseTrap(ctx context.Context, id, operator string) (IPALGreaseSensor, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	for i := range m.ipalSensors {
+		if m.ipalSensors[i].ID == id {
+			m.ipalSensors[i].LevelPct = 8
+			m.ipalSensors[i].Status = "OPTIMAL"
+			m.ipalSensors[i].LastCleanedAt = nowStr
+			m.ipalSensors[i].Notes = fmt.Sprintf("Dikuras & sensor di-reset oleh %s", operator)
+			updated := m.ipalSensors[i]
+			m.mu.Unlock()
+			_ = m.AppendAudit(ctx, operator, "FLUSH_GREASE_TRAP", "IPAL_SENSOR", updated.ID, fmt.Sprintf("Kuras %s selesai (level turun ke 8%%)", updated.ZoneName))
+			m.mu.Lock()
+			return updated, nil
+		}
+	}
+	return IPALGreaseSensor{}, errors.New("sensor IPAL tidak ditemukan")
+}
+
+func (m *MemoryStore) ListIPSRSWorkOrders(_ context.Context) ([]WorkOrderIPSRS, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]WorkOrderIPSRS, len(m.ipsrsWorkOrders))
+	copy(out, m.ipsrsWorkOrders)
+	return out, nil
+}
+
+func (m *MemoryStore) CreateIPSRSWorkOrder(ctx context.Context, wo WorkOrderIPSRS) (WorkOrderIPSRS, error) {
+	m.mu.Lock()
+	m.seq++
+	wo.ID = uuid.NewString()
+	wo.TicketNo = fmt.Sprintf("WO-IPSRS-%s-%03d", time.Now().UTC().Format("2006"), m.seq)
+	if wo.Status == "" {
+		wo.Status = "OPEN"
+	}
+	if wo.Priority == "" {
+		wo.Priority = "SEDANG"
+	}
+	wo.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	m.ipsrsWorkOrders = append([]WorkOrderIPSRS{wo}, m.ipsrsWorkOrders...)
+	m.mu.Unlock()
+	_ = m.AppendAudit(ctx, wo.Technician, "CREATE_IPSRS_WO", "IPSRS_WO", wo.TicketNo, wo.AssetOrZone+": "+wo.Notes)
+	return wo, nil
+}
+
+func (m *MemoryStore) UpdateIPSRSWorkOrderStatus(ctx context.Context, id, status string) (WorkOrderIPSRS, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.ipsrsWorkOrders {
+		if m.ipsrsWorkOrders[i].ID == id {
+			m.ipsrsWorkOrders[i].Status = strings.ToUpper(strings.TrimSpace(status))
+			updated := m.ipsrsWorkOrders[i]
+			m.mu.Unlock()
+			_ = m.AppendAudit(ctx, "ipsrs", "UPDATE_IPSRS_WO", "IPSRS_WO", updated.TicketNo, "Status diubah ke "+updated.Status)
+			m.mu.Lock()
+			return updated, nil
+		}
+	}
+	return WorkOrderIPSRS{}, errors.New("tiket work order tidak ditemukan")
 }

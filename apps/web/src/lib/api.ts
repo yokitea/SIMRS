@@ -242,6 +242,64 @@ export interface StaffCredential {
   status: string;
 }
 
+export interface MedicalAsset {
+  id: string;
+  asset_code: string;
+  name: string;
+  category: string;
+  location: string;
+  brand_model: string;
+  serial_number: string;
+  last_calibration: string;
+  next_calibration: string;
+  calibration_status: string;
+  ppm_interval_days: number;
+}
+
+export interface UtilityTelemetry {
+  id: string;
+  system_name: string;
+  category: string;
+  location: string;
+  metric_label: string;
+  current_value: string;
+  threshold_info: string;
+  backup_stock: string;
+  status: string;
+  updated_at: string;
+}
+
+export interface IPALGreaseSensor {
+  id: string;
+  zone_name: string;
+  sensor_type: string;
+  level_pct: number;
+  ph_value: number;
+  temp_c: number;
+  status: string;
+  last_cleaned_at: string;
+  notes: string;
+}
+
+export interface WorkOrderIPSRS {
+  id: string;
+  ticket_no: string;
+  asset_or_zone: string;
+  issue_type: string;
+  priority: string;
+  technician: string;
+  status: string;
+  notes: string;
+  created_at: string;
+}
+
+export interface IPSRSOverview {
+  assets: MedicalAsset[];
+  utilities: UtilityTelemetry[];
+  ipal_sensors: IPALGreaseSensor[];
+  work_orders: WorkOrderIPSRS[];
+}
+
 export type WorkstationType =
   | "CLINIC"
   | "PHARMACY"
@@ -250,6 +308,7 @@ export type WorkstationType =
   | "RANAP"
   | "EXECUTIVE"
   | "HRD"
+  | "IPSRS"
   | "ADMIN";
 
 export interface WorkstationMeta {
@@ -326,6 +385,15 @@ export const WORKSTATIONS: Record<WorkstationType, WorkstationMeta> = {
     description: "Early Warning System masa berlaku STR/SIP dokter & perawat, database SPK/RKK (Buku Putih), dan roster jaga.",
     allowedRoles: ["HRD", "ADMIN"],
   },
+  IPSRS: {
+    id: "IPSRS",
+    title: "Workstation IPSRS, Kalibrasi & IPAL IoT",
+    department: "Instalasi Pemeliharaan Sarana RS & Sanitasi",
+    badge: "MFK, Utility & IPAL Telemetry",
+    icon: "🔧",
+    description: "Kalibrasi alat kesehatan (Permenkes 40/2022), gas medis sentral & tabung O2 cadangan, HVAC, Genset, serta sensor grease trap IPAL.",
+    allowedRoles: ["IPSRS", "DIREKSI", "ADMIN"],
+  },
   ADMIN: {
     id: "ADMIN",
     title: "Workstation Administrator IT & IAM",
@@ -340,7 +408,7 @@ export const WORKSTATIONS: Record<WorkstationType, WorkstationMeta> = {
 export function getAllowedWorkstations(role: string): WorkstationType[] {
   const r = (role || "").toUpperCase();
   if (r === "ADMIN") {
-    return ["CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "ADMIN"];
+    return ["CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "IPSRS", "ADMIN"];
   }
   return (Object.keys(WORKSTATIONS) as WorkstationType[]).filter((key) =>
     WORKSTATIONS[key].allowedRoles.includes(r)
@@ -370,6 +438,7 @@ export function getDefaultWorkstation(
   if (r === "PERAWAT") return { ws: "RANAP", tab: "ranap" };
   if (r === "DIREKSI") return { ws: "EXECUTIVE", tab: "executive" };
   if (r === "HRD") return { ws: "HRD", tab: "hrd" };
+  if (r === "IPSRS") return { ws: "IPSRS", tab: "ipsrs" };
   return { ws: "ADMIN", tab: "admin" };
 }
 

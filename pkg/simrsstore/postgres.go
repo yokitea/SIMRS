@@ -621,3 +621,37 @@ func (p *PostgresStore) GetExecutiveMetrics(ctx context.Context) (ExecutiveMetri
 func (p *PostgresStore) ListStaffCredentials(_ context.Context) ([]StaffCredential, error) {
 	return (&MemoryStore{}).ListStaffCredentials(context.Background())
 }
+
+var pgIPSRSFallback = NewMemoryStore()
+
+func (p *PostgresStore) ListMedicalAssets(ctx context.Context) ([]MedicalAsset, error) {
+	return pgIPSRSFallback.ListMedicalAssets(ctx)
+}
+
+func (p *PostgresStore) CalibrateMedicalAsset(ctx context.Context, id, technician, nextDate string) (MedicalAsset, error) {
+	return pgIPSRSFallback.CalibrateMedicalAsset(ctx, id, technician, nextDate)
+}
+
+func (p *PostgresStore) ListUtilityTelemetry(ctx context.Context) ([]UtilityTelemetry, error) {
+	return pgIPSRSFallback.ListUtilityTelemetry(ctx)
+}
+
+func (p *PostgresStore) ListIPALSensors(ctx context.Context) ([]IPALGreaseSensor, error) {
+	return pgIPSRSFallback.ListIPALSensors(ctx)
+}
+
+func (p *PostgresStore) FlushGreaseTrap(ctx context.Context, id, operator string) (IPALGreaseSensor, error) {
+	return pgIPSRSFallback.FlushGreaseTrap(ctx, id, operator)
+}
+
+func (p *PostgresStore) ListIPSRSWorkOrders(ctx context.Context) ([]WorkOrderIPSRS, error) {
+	return pgIPSRSFallback.ListIPSRSWorkOrders(ctx)
+}
+
+func (p *PostgresStore) CreateIPSRSWorkOrder(ctx context.Context, wo WorkOrderIPSRS) (WorkOrderIPSRS, error) {
+	return pgIPSRSFallback.CreateIPSRSWorkOrder(ctx, wo)
+}
+
+func (p *PostgresStore) UpdateIPSRSWorkOrderStatus(ctx context.Context, id, status string) (WorkOrderIPSRS, error) {
+	return pgIPSRSFallback.UpdateIPSRSWorkOrderStatus(ctx, id, status)
+}

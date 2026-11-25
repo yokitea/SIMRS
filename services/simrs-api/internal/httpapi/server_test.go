@@ -150,3 +150,100 @@ func TestFullHospitalWorkflowWithRBAC(t *testing.T) {
 		t.Fatalf("expected >=4 outbox items, got %d", len(outbox))
 	}
 }
+
+func TestExecutiveAndIPSRSWorkflows(t *testing.T) {
+	repo := simrsstore.NewMemoryStore()
+	srv := NewServer(Config{BrandName: "Core SIMRS", HospitalName: "RS Demo", JWTSecret: "test_simrs_secret_at_least_32_bytes_ok"}, repo)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// 1. Direksi login & Executive Metrics (Fase 4)
+	direksiTok := loginSIMRS(t, ts.URL, "direksi", "direksi123")
+	resp := doAuthJSON(t, http.MethodGet, ts.URL+"/api/v1/executive/metrics", direksiTok, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("executive metrics failed: %d", resp.StatusCode)
+	}
+	var execPayload struct {
+		Metrics simrsstore.ExecutiveMetrics `json:"metrics"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&execPayload); err != nil {
+		t.Fatalf("decode executive metrics: %v", err)
+	}
+	resp.Body.Close()
+	if execPayload.Metrics.ALOS <= 0 || execPayload.Metrics.ClaimApprovalRate <= 0 {
+		t.Fatalf("unexpected executive metrics: %+v", execPayload.Metrics)
+	}
+
+	// 2. IPSRS login & Overview (Fase 6)
+	ipsrsTok := loginSIMRS(t, ts.URL, "ipsrs", "ipsrs123")
+	resp = doAuthJSON(t, http.MethodGet, ts.URL+"/api/v1/ipsrs/overview", ipsrsTok, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ipsrs overview failed: %d", resp.StatusCode)
+	}
+	var ov struct {
+		Assets      []simrsstore.MedicalAsset     `json:"assets"`
+		Utilities   []simrsstore.UtilityTelemetry `json:"utilities"`
+		IPALSensors []simrsstore.IPALGreaseSensor `json:"ipal_sensors"`
+		WorkOrders  []simrsstore.WorkOrderIPSRS   `json:"work_orders"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ov); err != nil {
+		t.Fatalf("decode ipsrs overview: %v", err)
+	}
+	resp.Body.Close()
+	if len(ov.Assets) < 6 || len(ov.Utilities) < 6 || len(ov.IPALSensors) < 4 || len(ov.WorkOrders) < 3 {
+		t.Fatalf("incomplete ipsrs seed: assets=%d util=%d ipal=%d wo=%d", len(ov.Assets), len(ov.Utilities), len(ov.IPALSensors), len(ov.WorkOrders))
+	}
+
+	// 3. Calibrate overdue Defibrillator ALK-03 -> LAIK_PAKAI
+	resp = doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/ipsrs/assets/ALK-03/calibrate", ipsrsTok, []byte(`{}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("calibrate asset failed: %d", resp.StatusCode)
+	}
+	var calRes struct {
+		Asset simrsstore.MedicalAsset `json:"asset"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&calRes)
+	resp.Body.Close()
+	if calRes.Asset.CalibrationStatus != "LAIK_PAKAI" {
+		t.Fatalf("expected LAIK_PAKAI, got %s", calRes.Asset.CalibrationStatus)
+	}
+
+	// 4. Flush Grease Trap IPAL-01 -> OPTIMAL (8%)
+	resp = doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/ipsrs/ipal/IPAL-01/flush", ipsrsTok, []byte(`{}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("flush ipal failed: %d", resp.StatusCode)
+	}
+	var flushRes struct {
+		Sensor simrsstore.IPALGreaseSensor `json:"sensor"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&flushRes)
+	resp.Body.Close()
+	if flushRes.Sensor.Status != "OPTIMAL" || flushRes.Sensor.LevelPct != 8 {
+		t.Fatalf("expected OPTIMAL 8%%, got %+v", flushRes.Sensor)
+	}
+
+	// 5. Create & Resolve IPSRS Work Order
+	woBody := []byte(`{"asset_or_zone":"Tabung O2 Cadangan IGD","issue_type":"PREVENTIVE","priority":"TINGGI","technician":"Ir. Bambang","notes":"Cek regulator manifold"}`)
+	resp = doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/ipsrs/work-orders", ipsrsTok, woBody)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create wo failed: %d", resp.StatusCode)
+	}
+	var woRes struct {
+		WorkOrder simrsstore.WorkOrderIPSRS `json:"work_order"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&woRes)
+	resp.Body.Close()
+
+	resp = doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/ipsrs/work-orders/"+woRes.WorkOrder.ID+"/status", ipsrsTok, []byte(`{"status":"RESOLVED"}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update wo status failed: %d", resp.StatusCode)
+	}
+	var woUpd struct {
+		WorkOrder simrsstore.WorkOrderIPSRS `json:"work_order"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&woUpd)
+	resp.Body.Close()
+	if woUpd.WorkOrder.Status != "RESOLVED" {
+		t.Fatalf("expected RESOLVED, got %s", woUpd.WorkOrder.Status)
+	}
+}

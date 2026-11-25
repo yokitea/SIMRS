@@ -205,9 +205,68 @@ type StaffCredential struct {
 	Status            string `json:"status"`
 }
 
+type MedicalAsset struct {
+	ID                string `json:"id"`
+	AssetCode         string `json:"asset_code"`
+	Name              string `json:"name"`
+	Category          string `json:"category"`
+	Location          string `json:"location"`
+	BrandModel        string `json:"brand_model"`
+	SerialNumber      string `json:"serial_number"`
+	LastCalibration   string `json:"last_calibration"`
+	NextCalibration   string `json:"next_calibration"`
+	CalibrationStatus string `json:"calibration_status"`
+	PPMIntervalDays   int    `json:"ppm_interval_days"`
+}
+
+type UtilityTelemetry struct {
+	ID            string `json:"id"`
+	SystemName    string `json:"system_name"`
+	Category      string `json:"category"`
+	Location      string `json:"location"`
+	MetricLabel   string `json:"metric_label"`
+	CurrentValue  string `json:"current_value"`
+	ThresholdInfo string `json:"threshold_info"`
+	BackupStock   string `json:"backup_stock"`
+	Status        string `json:"status"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+type IPALGreaseSensor struct {
+	ID            string  `json:"id"`
+	ZoneName      string  `json:"zone_name"`
+	SensorType    string  `json:"sensor_type"`
+	LevelPct      int     `json:"level_pct"`
+	PHValue       float64 `json:"ph_value"`
+	TempC         float64 `json:"temp_c"`
+	Status        string  `json:"status"`
+	LastCleanedAt string  `json:"last_cleaned_at"`
+	Notes         string  `json:"notes"`
+}
+
+type WorkOrderIPSRS struct {
+	ID          string `json:"id"`
+	TicketNo    string `json:"ticket_no"`
+	AssetOrZone string `json:"asset_or_zone"`
+	IssueType   string `json:"issue_type"`
+	Priority    string `json:"priority"`
+	Technician  string `json:"technician"`
+	Status      string `json:"status"`
+	Notes       string `json:"notes"`
+	CreatedAt   string `json:"created_at"`
+}
+
 type Repository interface {
 	GetExecutiveMetrics(ctx context.Context) (ExecutiveMetrics, error)
 	ListStaffCredentials(ctx context.Context) ([]StaffCredential, error)
+	ListMedicalAssets(ctx context.Context) ([]MedicalAsset, error)
+	CalibrateMedicalAsset(ctx context.Context, id, technician, nextDate string) (MedicalAsset, error)
+	ListUtilityTelemetry(ctx context.Context) ([]UtilityTelemetry, error)
+	ListIPALSensors(ctx context.Context) ([]IPALGreaseSensor, error)
+	FlushGreaseTrap(ctx context.Context, id, operator string) (IPALGreaseSensor, error)
+	ListIPSRSWorkOrders(ctx context.Context) ([]WorkOrderIPSRS, error)
+	CreateIPSRSWorkOrder(ctx context.Context, wo WorkOrderIPSRS) (WorkOrderIPSRS, error)
+	UpdateIPSRSWorkOrderStatus(ctx context.Context, id, status string) (WorkOrderIPSRS, error)
 	ListClinics(ctx context.Context) ([]ClinicUnit, error)
 	ListPatients(ctx context.Context, query string) ([]Patient, error)
 	GetPatient(ctx context.Context, id string) (Patient, bool, error)

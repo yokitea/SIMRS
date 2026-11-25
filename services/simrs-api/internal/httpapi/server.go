@@ -84,6 +84,7 @@ func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 	admisiH, _ := auth.HashPassword("admisi123")
 	direksiH, _ := auth.HashPassword("direksi123")
 	hrdH, _ := auth.HashPassword("hrd123")
+	ipsrsH, _ := auth.HashPassword("ipsrs123")
 
 	s := &Server{
 		cfg:     cfg,
@@ -103,6 +104,7 @@ func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 			"admisi":       {Username: "admisi", Role: "ADMISI", FullName: "Dewi Lestari, A.Md", Hash: admisiH, Unit: "Admisi & Registrasi", NIP: "199502102018042008", Active: true},
 			"direksi":      {Username: "direksi", Role: "DIREKSI", FullName: "dr. Budi Rahardjo, MARS", Hash: direksiH, Unit: "Direksi & Manajemen Eksekutif", NIP: "197509122000031001", Active: true},
 			"hrd":          {Username: "hrd", Role: "HRD", FullName: "Siti Rahmawati, S.Psi", Hash: hrdH, Unit: "Bagian SDM & Kredensial Medis", NIP: "199008252016022004", Active: true},
+			"ipsrs":        {Username: "ipsrs", Role: "IPSRS", FullName: "Ir. Bambang Prasetyo, ST", Hash: ipsrsH, Unit: "Instalasi Pemeliharaan Sarana RS (IPSRS)", NIP: "198604102011011009", Active: true},
 		},
 		mux: http.NewServeMux(),
 	}
@@ -118,7 +120,7 @@ func (s *Server) Handler() http.Handler {
 func allowedWorkstationsForRole(role string) []string {
 	switch strings.ToUpper(strings.TrimSpace(role)) {
 	case "ADMIN":
-		return []string{"CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "ADMIN"}
+		return []string{"CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "IPSRS", "ADMIN"}
 	case "DOKTER":
 		return []string{"CLINIC", "RANAP"}
 	case "FARMASI":
@@ -130,9 +132,11 @@ func allowedWorkstationsForRole(role string) []string {
 	case "PERAWAT":
 		return []string{"RANAP"}
 	case "DIREKSI":
-		return []string{"EXECUTIVE", "RANAP"}
+		return []string{"EXECUTIVE", "RANAP", "IPSRS"}
 	case "HRD":
 		return []string{"HRD"}
+	case "IPSRS":
+		return []string{"IPSRS"}
 	default:
 		return []string{"CLINIC"}
 	}
@@ -200,6 +204,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/satusehat/test-oauth", adminOnly(s.handleTestSatusehatOAuth))
 	s.mux.HandleFunc("GET /api/v1/executive/metrics", anyAuth(s.handleExecutiveMetrics))
 	s.mux.HandleFunc("GET /api/v1/hrd/credentials", anyAuth(s.handleHRDCredentials))
+	s.mux.HandleFunc("GET /api/v1/ipsrs/overview", anyAuth(s.handleIPSRSOverview))
+	s.mux.HandleFunc("POST /api/v1/ipsrs/assets/{id}/calibrate", anyAuth(s.handleCalibrateAsset))
+	s.mux.HandleFunc("POST /api/v1/ipsrs/ipal/{id}/flush", anyAuth(s.handleFlushIPAL))
+	s.mux.HandleFunc("POST /api/v1/ipsrs/work-orders", anyAuth(s.handleCreateIPSRSWorkOrder))
+	s.mux.HandleFunc("POST /api/v1/ipsrs/work-orders/{id}/status", anyAuth(s.handleUpdateIPSRSWorkOrderStatus))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -850,6 +859,106 @@ func (s *Server) handleHRDCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"credentials": creds})
+}
+
+func (s *Server) handleIPSRSOverview(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	assets, err := s.repo.ListMedicalAssets(ctx)
+	if err != nil {
+		writeInternalErr(w, "ipsrs assets", err)
+		return
+	}
+	utilities, err := s.repo.ListUtilityTelemetry(ctx)
+	if err != nil {
+		writeInternalErr(w, "ipsrs utilities", err)
+		return
+	}
+	ipal, err := s.repo.ListIPALSensors(ctx)
+	if err != nil {
+		writeInternalErr(w, "ipsrs ipal", err)
+		return
+	}
+	wos, err := s.repo.ListIPSRSWorkOrders(ctx)
+	if err != nil {
+		writeInternalErr(w, "ipsrs work orders", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"assets":       assets,
+		"utilities":    utilities,
+		"ipal_sensors": ipal,
+		"work_orders":  wos,
+	})
+}
+
+func (s *Server) handleCalibrateAsset(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		NextCalibration string `json:"next_calibration"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	actor := "ipsrs"
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
+		actor = claims.Name
+	}
+	updated, err := s.repo.CalibrateMedicalAsset(r.Context(), id, actor, req.NextCalibration)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"asset": updated})
+}
+
+func (s *Server) handleFlushIPAL(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	actor := "ipsrs"
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
+		actor = claims.Name
+	}
+	updated, err := s.repo.FlushGreaseTrap(r.Context(), id, actor)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sensor": updated})
+}
+
+func (s *Server) handleCreateIPSRSWorkOrder(w http.ResponseWriter, r *http.Request) {
+	var req simrsstore.WorkOrderIPSRS
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload tidak valid"})
+		return
+	}
+	if strings.TrimSpace(req.AssetOrZone) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "asset_or_zone wajib diisi"})
+		return
+	}
+	if strings.TrimSpace(req.Technician) == "" {
+		req.Technician = "Tim IPSRS"
+	}
+	wo, err := s.repo.CreateIPSRSWorkOrder(r.Context(), req)
+	if err != nil {
+		writeInternalErr(w, "create ipsrs wo", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"work_order": wo})
+}
+
+func (s *Server) handleUpdateIPSRSWorkOrderStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Status) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "status wajib diisi"})
+		return
+	}
+	updated, err := s.repo.UpdateIPSRSWorkOrderStatus(r.Context(), id, req.Status)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"work_order": updated})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
