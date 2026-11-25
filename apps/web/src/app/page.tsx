@@ -37,6 +37,7 @@ import MedicationLabelPrinter from "@/components/pharmacy/MedicationLabelPrinter
 import PrescriptionReviewModal from "@/components/pharmacy/PrescriptionReviewModal";
 import PaymentModal from "@/components/billing/PaymentModal";
 import AccountingAuditPanel from "@/components/billing/AccountingAuditPanel";
+import ExecutiveDashboard from "@/components/executive/ExecutiveDashboard";
 
 const DEFAULT_CLINICS: ClinicUnit[] = [
   { code: "POLI-UMUM", name: "Poli Umum", specialty: "Pelayanan Medis Dasar / Dokter Umum", bpjs_poli_code: "UMU", room_number: "R.101", floor: "Lantai 1 Dasar", default_doctor: "dr. Ahmad Fauzi", doctor_list: ["dr. Ahmad Fauzi", "dr. Rina Kusuma"], operating_hours: "07:30 - 21:00 WIB" },
@@ -2644,181 +2645,13 @@ export default function SIMRSConsolePage() {
 
         {/* TAB 8: EXECUTIVE COMMAND CENTER */}
         {tab === "executive" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {/* Header / Intro */}
-            <section className="card" style={{ background: "linear-gradient(180deg, rgba(225, 29, 72, 0.08) 0%, rgba(15, 23, 42, 0.5) 100%)", border: "1px solid rgba(225, 29, 72, 0.3)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-                <div>
-                  <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 16 }}>
-                    <span>📊 Executive Command Center & Hospital Intelligence</span>
-                    <span className="badge badge-red" style={{ fontSize: 11 }}>Direksi & Manajemen RS</span>
-                  </h3>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
-                    Monitoring indikator efisiensi rawat inap Barber-Johnson, performa finansial arus kas, dan SLA waktu tunggu pelayanan per departemen.
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-secondary" onClick={() => loadAll()} style={{ fontSize: 12, padding: "6px 12px" }}>
-                    🔄 Refresh Data
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            {/* Barber-Johnson Efficiency Indicators */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-              <div className="card" style={{ borderLeft: "4px solid #10b981" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>BOR (Bed Occupancy Rate)</span>
-                  <span className="badge badge-green" style={{ fontSize: 10 }}>Optimal</span>
-                </div>
-                <div style={{ fontSize: 28, fontWeight: 700, margin: "6px 0", color: "#10b981" }}>
-                  {executiveMetrics?.bor ?? 78.5}%
-                </div>
-                <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  Target Kemenkes RI: <strong>60% - 85%</strong> (Pemanfaatan bed rawat inap sangat ideal)
-                </div>
-              </div>
-
-              <div className="card" style={{ borderLeft: "4px solid #06b6d4" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>ALOS (Avg Length of Stay)</span>
-                  <span className="badge badge-cyan" style={{ fontSize: 10 }}>Efisien</span>
-                </div>
-                <div style={{ fontSize: 28, fontWeight: 700, margin: "6px 0", color: "#06b6d4" }}>
-                  {executiveMetrics?.alos ?? 4.2} <span style={{ fontSize: 14 }}>Hari</span>
-                </div>
-                <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  Standar Mutu: <strong>3 - 6 Hari</strong> (Kendali mutu & biaya INA-CBG optimal)
-                </div>
-              </div>
-
-              <div className="card" style={{ borderLeft: "4px solid #f59e0b" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>TOI (Turn Over Interval)</span>
-                  <span className="badge badge-amber" style={{ fontSize: 10 }}>Produktif</span>
-                </div>
-                <div style={{ fontSize: 28, fontWeight: 700, margin: "6px 0", color: "#f59e0b" }}>
-                  {executiveMetrics?.toi ?? 1.8} <span style={{ fontSize: 14 }}>Hari</span>
-                </div>
-                <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  Standar Kemenkes: <strong>1 - 3 Hari</strong> (Jeda bed kosong sebelum terisi pasien baru)
-                </div>
-              </div>
-
-              <div className="card" style={{ borderLeft: "4px solid #8b5cf6" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>BTO (Bed Turn Over)</span>
-                  <span className="badge badge-purple" style={{ fontSize: 10 }}>Efektif</span>
-                </div>
-                <div style={{ fontSize: 28, fontWeight: 700, margin: "6px 0", color: "#8b5cf6" }}>
-                  {executiveMetrics?.bto ?? 42} <span style={{ fontSize: 14 }}>x / bed / thn</span>
-                </div>
-                <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  Standar Kemenkes: <strong>40 - 50 kali</strong> per tempat tidur setahun
-                </div>
-              </div>
-            </div>
-
-            {/* Financial Revenue Breakdown & SLA Row */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 16 }}>
-              {/* Financial Breakdown */}
-              <div className="card">
-                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
-                  <span>💰 Komposisi Pendapatan Rumah Sakit (Bulan Berjalan)</span>
-                </h4>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                      <span>Klaim BPJS Kesehatan</span>
-                      <strong style={{ color: "#38bdf8" }}>{formatIDR(executiveMetrics?.revenue_bpjs ?? 1450000000)}</strong>
-                    </div>
-                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, height: 8, overflow: "hidden" }}>
-                      <div style={{ width: "70%", background: "#38bdf8", height: "100%" }} />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                      <span>Pasien Umum / Tunai (Cash & QRIS)</span>
-                      <strong style={{ color: "#34d399" }}>{formatIDR(executiveMetrics?.revenue_cash ?? 380000000)}</strong>
-                    </div>
-                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, height: 8, overflow: "hidden" }}>
-                      <div style={{ width: "19%", background: "#34d399", height: "100%" }} />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                      <span>Asuransi Komersial & Korporasi</span>
-                      <strong style={{ color: "#f59e0b" }}>{formatIDR(executiveMetrics?.revenue_insurance ?? 220000000)}</strong>
-                    </div>
-                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, height: 8, overflow: "hidden" }}>
-                      <div style={{ width: "11%", background: "#f59e0b", height: "100%" }} />
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: 8, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Total Estimasi Pendapatan:</span>
-                    <strong style={{ fontSize: 16, color: "#f8fafc" }}>
-                      {formatIDR((executiveMetrics?.revenue_bpjs ?? 1450000000) + (executiveMetrics?.revenue_cash ?? 380000000) + (executiveMetrics?.revenue_insurance ?? 220000000))}
-                    </strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* SLA & Waktu Tunggu */}
-              <div className="card">
-                <h4 style={{ margin: "0 0 12px 0", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
-                  <span>⏱️ Service Level Agreement (SLA) Waktu Tunggu Pasien</span>
-                </h4>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>Loket Admisi & Pendaftaran</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Standar SPM: &lt; 15 menit</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: "#10b981" }}>{executiveMetrics?.avg_wait_admission_min ?? 12} Menit</div>
-                      <span className="badge badge-green" style={{ fontSize: 10 }}>Sesuai Standar</span>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>Antrean Konsultasi Poliklinik Dokter</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Standar SPM: &lt; 30 menit</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: "#10b981" }}>{executiveMetrics?.avg_wait_clinic_min ?? 18} Menit</div>
-                      <span className="badge badge-green" style={{ fontSize: 10 }}>Sesuai Standar</span>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>Penyiapan & Telaah Resep Farmasi</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Standar SPM: &lt; 30 menit non-racikan</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: "#10b981" }}>{executiveMetrics?.avg_wait_pharmacy_min ?? 22} Menit</div>
-                      <span className="badge badge-green" style={{ fontSize: 10 }}>Sesuai Standar</span>
-                    </div>
-                  </div>
-
-                  <div style={{ padding: "8px 12px", background: "rgba(56, 189, 248, 0.05)", borderRadius: 6, border: "1px solid rgba(56, 189, 248, 0.2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>Tingkat Persetujuan Klaim BPJS</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>Bebas pending & dispute INA-CBG</div>
-                    </div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: "#38bdf8" }}>
-                      {executiveMetrics?.claim_approval_rate ?? 96.4}%
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ExecutiveDashboard
+            metrics={executiveMetrics}
+            visits={visits}
+            billing={billing}
+            beds={beds}
+            onRefresh={() => loadAll()}
+          />
         )}
 
         {/* TAB 9: SDM & KREDENSIAL MEDIS */}
