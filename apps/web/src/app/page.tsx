@@ -162,24 +162,33 @@ export default function SIMRSConsolePage() {
     const tok = getToken();
     if (!tok) return;
     const h = { headers: authHeaders() };
+    const role = (localStorage.getItem("simrs_role") || "ADMIN").toUpperCase();
+    const isAdmin = role === "ADMIN";
+    const canClinical = ["ADMIN", "DOKTER", "PERAWAT", "ADMISI", "FARMASI", "KASIR", "DIREKSI"].includes(role);
+    const canBilling = ["ADMIN", "KASIR", "DIREKSI"].includes(role);
+    const canExec = ["ADMIN", "DIREKSI"].includes(role);
+    const canHRD = ["ADMIN", "HRD", "DIREKSI"].includes(role);
+    const canIPSRS = ["ADMIN", "IPSRS", "DIREKSI"].includes(role);
+    const canOps = ["ADMIN", "OPS", "DIREKSI"].includes(role);
+
     try {
       const [dRes, pRes, vRes, bRes, mRes, rxRes, rRes, bilRes, oRes, uRes, aRes, cRes, execRes, hrdRes, ipsrsRes, opsRes] = await Promise.all([
         fetch(`${SIMRS_API_URL}/api/v1/dashboard`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/patients`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/visits`, h),
+        canClinical ? fetch(`${SIMRS_API_URL}/api/v1/patients`, h) : Promise.resolve(null),
+        canClinical ? fetch(`${SIMRS_API_URL}/api/v1/visits`, h) : Promise.resolve(null),
         fetch(`${SIMRS_API_URL}/api/v1/beds`, h),
         fetch(`${SIMRS_API_URL}/api/v1/medications`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/prescriptions`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/radiology-orders`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/billing`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/outbox`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/users`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/audit-logs`, h),
+        canClinical ? fetch(`${SIMRS_API_URL}/api/v1/prescriptions`, h) : Promise.resolve(null),
+        canClinical ? fetch(`${SIMRS_API_URL}/api/v1/radiology-orders`, h) : Promise.resolve(null),
+        canBilling ? fetch(`${SIMRS_API_URL}/api/v1/billing`, h) : Promise.resolve(null),
+        isAdmin ? fetch(`${SIMRS_API_URL}/api/v1/outbox`, h) : Promise.resolve(null),
+        isAdmin ? fetch(`${SIMRS_API_URL}/api/v1/users`, h) : Promise.resolve(null),
+        isAdmin ? fetch(`${SIMRS_API_URL}/api/v1/audit-logs`, h) : Promise.resolve(null),
         fetch(`${SIMRS_API_URL}/api/v1/clinics`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/executive/metrics`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/hrd/credentials`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/ipsrs/overview`, h),
-        fetch(`${SIMRS_API_URL}/api/v1/ops/overview`, h),
+        canExec ? fetch(`${SIMRS_API_URL}/api/v1/executive/metrics`, h) : Promise.resolve(null),
+        canHRD ? fetch(`${SIMRS_API_URL}/api/v1/hrd/credentials`, h) : Promise.resolve(null),
+        canIPSRS ? fetch(`${SIMRS_API_URL}/api/v1/ipsrs/overview`, h) : Promise.resolve(null),
+        canOps ? fetch(`${SIMRS_API_URL}/api/v1/ops/overview`, h) : Promise.resolve(null),
       ]);
       if (dRes.status === 401) {
         localStorage.removeItem("simrs_jwt");
@@ -187,13 +196,13 @@ export default function SIMRSConsolePage() {
         return;
       }
       if (dRes.ok) setDashboard(await dRes.json());
-      if (pRes.ok) {
+      if (pRes && pRes.ok) {
         const j = await pRes.json();
         const list: Patient[] = j.patients || [];
         setPatients(list);
         setNewVisit((prev) => (prev.patient_id || list.length === 0 ? prev : { ...prev, patient_id: list[0].id }));
       }
-      if (vRes.ok) {
+      if (vRes && vRes.ok) {
         const j = await vRes.json();
         const list: Visit[] = j.visits || [];
         setVisits(list);
@@ -201,12 +210,12 @@ export default function SIMRSConsolePage() {
       }
       if (bRes.ok) setBeds((await bRes.json()).beds || []);
       if (mRes.ok) setMedications((await mRes.json()).medications || []);
-      if (rxRes.ok) setPrescriptions((await rxRes.json()).prescriptions || []);
-      if (rRes.ok) setRadOrders((await rRes.json()).radiology_orders || []);
-      if (bilRes.ok) setBilling((await bilRes.json()).billing_items || []);
-      if (oRes.ok) setOutbox((await oRes.json()).outbox || []);
-      if (uRes.ok) setUsers((await uRes.json()).users || []);
-      if (aRes.ok) setAuditLogs((await aRes.json()).audit_logs || []);
+      if (rxRes && rxRes.ok) setPrescriptions((await rxRes.json()).prescriptions || []);
+      if (rRes && rRes.ok) setRadOrders((await rRes.json()).radiology_orders || []);
+      if (bilRes && bilRes.ok) setBilling((await bilRes.json()).billing_items || []);
+      if (oRes && oRes.ok) setOutbox((await oRes.json()).outbox || []);
+      if (uRes && uRes.ok) setUsers((await uRes.json()).users || []);
+      if (aRes && aRes.ok) setAuditLogs((await aRes.json()).audit_logs || []);
       if (cRes && cRes.ok) {
         const cj = await cRes.json();
         if (cj.clinics && cj.clinics.length > 0) setClinics(cj.clinics);
@@ -1579,18 +1588,18 @@ export default function SIMRSConsolePage() {
                 </div>
               </div>
 
-              {/* Render Canvas */}
+              {/* Render Canvas (keyed by activeVisitId to prevent cross-patient state bleed) */}
               {effectiveSpecialty === "odontogram" && (
-                <OdontogramCanvas onExportToSOAP={handleExportSpecialtyToSOAP} />
+                <OdontogramCanvas key={activeVisitId} onExportToSOAP={handleExportSpecialtyToSOAP} />
               )}
               {effectiveSpecialty === "neuro" && (
-                <NeuroScore onExportToSOAP={handleExportSpecialtyToSOAP} />
+                <NeuroScore key={activeVisitId} onExportToSOAP={handleExportSpecialtyToSOAP} />
               )}
               {effectiveSpecialty === "pediatric" && (
-                <PediatricGrowthChart onExportToSOAP={handleExportSpecialtyToSOAP} />
+                <PediatricGrowthChart key={activeVisitId} onExportToSOAP={handleExportSpecialtyToSOAP} />
               )}
               {effectiveSpecialty === "eye" && (
-                <OphthalmologyCanvas onExportToSOAP={handleExportSpecialtyToSOAP} />
+                <OphthalmologyCanvas key={activeVisitId} onExportToSOAP={handleExportSpecialtyToSOAP} />
               )}
               {effectiveSpecialty === "general" && (
                 <div style={{ padding: "16px 20px", background: "#0d121c", borderRadius: 8, border: "1px dashed var(--border)", textAlign: "center", color: "var(--muted)", fontSize: 12 }}>

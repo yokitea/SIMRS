@@ -909,8 +909,10 @@ func (m *MemoryStore) SettleVisitBilling(_ context.Context, visitID string) (int
 	defer m.mu.Unlock()
 	var total int64
 	for _, item := range m.billing[visitID] {
-		item.Paid = true
-		total += item.Subtotal
+		if !item.Paid {
+			item.Paid = true
+			total += item.Subtotal
+		}
 	}
 	if v, ok := m.visits[visitID]; ok && v.ServiceType != "RI" {
 		v.Status = "SELESAI"
@@ -948,11 +950,15 @@ func (m *MemoryStore) ListOutbox(_ context.Context, limit int) ([]OutboxItem, er
 func (m *MemoryStore) AppendAudit(_ context.Context, actor, action, resType, resID, detail string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.appendAuditLocked(actor, action, resType, resID, detail)
+	return nil
+}
+
+func (m *MemoryStore) appendAuditLocked(actor, action, resType, resID, detail string) {
 	m.auditSeq++
 	m.audits = append(m.audits, AuditLog{
 		ID: m.auditSeq, Actor: actor, Action: action, ResourceType: resType, ResourceID: resID, Detail: detail, CreatedAt: time.Now().UTC(),
 	})
-	return nil
 }
 
 func (m *MemoryStore) ListAudits(_ context.Context, limit int) ([]AuditLog, error) {
@@ -1253,9 +1259,7 @@ func (m *MemoryStore) CalibrateMedicalAsset(ctx context.Context, id, technician,
 			}
 			m.medicalAssets[i].CalibrationStatus = "LAIK_PAKAI"
 			updated := m.medicalAssets[i]
-			m.mu.Unlock()
-			_ = m.AppendAudit(ctx, technician, "CALIBRATE_ASSET", "IPSRS_ASSET", updated.AssetCode, fmt.Sprintf("Kalibrasi %s selesai, berlaku s.d. %s", updated.Name, updated.NextCalibration))
-			m.mu.Lock()
+			m.appendAuditLocked(technician, "CALIBRATE_ASSET", "IPSRS_ASSET", updated.AssetCode, fmt.Sprintf("Kalibrasi %s selesai, berlaku s.d. %s", updated.Name, updated.NextCalibration))
 			return updated, nil
 		}
 	}
@@ -1289,9 +1293,7 @@ func (m *MemoryStore) FlushGreaseTrap(ctx context.Context, id, operator string) 
 			m.ipalSensors[i].LastCleanedAt = nowStr
 			m.ipalSensors[i].Notes = fmt.Sprintf("Dikuras & sensor di-reset oleh %s", operator)
 			updated := m.ipalSensors[i]
-			m.mu.Unlock()
-			_ = m.AppendAudit(ctx, operator, "FLUSH_GREASE_TRAP", "IPAL_SENSOR", updated.ID, fmt.Sprintf("Kuras %s selesai (level turun ke 8%%)", updated.ZoneName))
-			m.mu.Lock()
+			m.appendAuditLocked(operator, "FLUSH_GREASE_TRAP", "IPAL_SENSOR", updated.ID, fmt.Sprintf("Kuras %s selesai (level turun ke 8%%)", updated.ZoneName))
 			return updated, nil
 		}
 	}
@@ -1331,9 +1333,7 @@ func (m *MemoryStore) UpdateIPSRSWorkOrderStatus(ctx context.Context, id, status
 		if m.ipsrsWorkOrders[i].ID == id {
 			m.ipsrsWorkOrders[i].Status = strings.ToUpper(strings.TrimSpace(status))
 			updated := m.ipsrsWorkOrders[i]
-			m.mu.Unlock()
-			_ = m.AppendAudit(ctx, "ipsrs", "UPDATE_IPSRS_WO", "IPSRS_WO", updated.TicketNo, "Status diubah ke "+updated.Status)
-			m.mu.Lock()
+			m.appendAuditLocked("ipsrs", "UPDATE_IPSRS_WO", "IPSRS_WO", updated.TicketNo, "Status diubah ke "+updated.Status)
 			return updated, nil
 		}
 	}
@@ -1444,9 +1444,7 @@ func (m *MemoryStore) AdvanceNutritionOrder(ctx context.Context, id, actor strin
 			}
 			m.nutritionOrders[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			updated := m.nutritionOrders[i]
-			m.mu.Unlock()
-			_ = m.AppendAudit(ctx, actor, "ADVANCE_NUTRITION", "GIZI", updated.ID, fmt.Sprintf("Diet %s (%s) -> %s", updated.PatientName, updated.WardRoom, updated.Status))
-			m.mu.Lock()
+			m.appendAuditLocked(actor, "ADVANCE_NUTRITION", "GIZI", updated.ID, fmt.Sprintf("Diet %s (%s) -> %s", updated.PatientName, updated.WardRoom, updated.Status))
 			return updated, nil
 		}
 	}
@@ -1474,9 +1472,7 @@ func (m *MemoryStore) AdvanceCSSDBatch(ctx context.Context, id, actor string) (C
 				m.cssdBatches[i].BioIndicator = "LULUS_SPORA"
 			}
 			updated := m.cssdBatches[i]
-			m.mu.Unlock()
-			_ = m.AppendAudit(ctx, actor, "ADVANCE_CSSD", "CSSD", updated.BatchNo, fmt.Sprintf("%s -> %s (%s)", updated.SetName, updated.Status, updated.BioIndicator))
-			m.mu.Lock()
+			m.appendAuditLocked(actor, "ADVANCE_CSSD", "CSSD", updated.BatchNo, fmt.Sprintf("%s -> %s (%s)", updated.SetName, updated.Status, updated.BioIndicator))
 			return updated, nil
 		}
 	}
@@ -1508,9 +1504,7 @@ func (m *MemoryStore) DispatchAmbulance(ctx context.Context, id, mission, actor 
 				m.ambulances[i].CurrentMission = "Kembali Siaga di Posko IGD"
 			}
 			updated := m.ambulances[i]
-			m.mu.Unlock()
-			_ = m.AppendAudit(ctx, actor, "DISPATCH_AMBULANCE", "AMBULANCE", updated.PlateNo, fmt.Sprintf("%s -> %s (%s)", updated.UnitName, updated.Status, updated.CurrentMission))
-			m.mu.Lock()
+			m.appendAuditLocked(actor, "DISPATCH_AMBULANCE", "AMBULANCE", updated.PlateNo, fmt.Sprintf("%s -> %s (%s)", updated.UnitName, updated.Status, updated.CurrentMission))
 			return updated, nil
 		}
 	}

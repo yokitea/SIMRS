@@ -315,3 +315,74 @@ func TestOpsPhase7Workflows(t *testing.T) {
 		t.Fatalf("expected ON_DUTY, got %s", ambRes.Ambulance.Status)
 	}
 }
+
+func TestNegativeRBACAndIdempotency(t *testing.T) {
+	repo := simrsstore.NewMemoryStore()
+	srv := NewServer(Config{BrandName: "Core SIMRS", HospitalName: "RS Demo", JWTSecret: "test_simrs_secret_at_least_32_bytes_ok"}, repo)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	kasirTok := loginSIMRS(t, ts.URL, "kasir", "kasir123")
+	dokterTok := loginSIMRS(t, ts.URL, "dokter", "dokter123")
+	ipsrsTok := loginSIMRS(t, ts.URL, "ipsrs", "ipsrs123")
+	opsTok := loginSIMRS(t, ts.URL, "operasional", "ops123")
+	direksiTok := loginSIMRS(t, ts.URL, "direksi", "direksi123")
+
+	forbiddenChecks := []struct {
+		name   string
+		method string
+		path   string
+		token  string
+		body   []byte
+	}{
+		{"kasir->executive", http.MethodGet, "/api/v1/executive/metrics", kasirTok, nil},
+		{"kasir->hrd", http.MethodGet, "/api/v1/hrd/credentials", kasirTok, nil},
+		{"kasir->ipsrs-read", http.MethodGet, "/api/v1/ipsrs/overview", kasirTok, nil},
+		{"kasir->ipsrs-calibrate", http.MethodPost, "/api/v1/ipsrs/assets/ALK-03/calibrate", kasirTok, []byte(`{}`)},
+		{"kasir->ops-read", http.MethodGet, "/api/v1/ops/overview", kasirTok, nil},
+		{"kasir->ops-cssd", http.MethodPost, "/api/v1/ops/cssd/CSSD-01/advance", kasirTok, []byte(`{}`)},
+		{"kasir->pacs-viewer", http.MethodGet, "/api/v1/radiology-orders/fake/viewer-url", kasirTok, nil},
+		{"dokter->audit-logs", http.MethodGet, "/api/v1/audit-logs", dokterTok, nil},
+		{"dokter->outbox", http.MethodGet, "/api/v1/outbox", dokterTok, nil},
+		{"ipsrs->patients", http.MethodGet, "/api/v1/patients", ipsrsTok, nil},
+		{"ops->patients", http.MethodGet, "/api/v1/patients", opsTok, nil},
+		{"direksi->ipsrs-write", http.MethodPost, "/api/v1/ipsrs/assets/ALK-03/calibrate", direksiTok, []byte(`{}`)},
+		{"direksi->ops-write", http.MethodPost, "/api/v1/ops/cssd/CSSD-01/advance", direksiTok, []byte(`{}`)},
+	}
+
+	for _, tc := range forbiddenChecks {
+		resp := doAuthJSON(t, tc.method, ts.URL+tc.path, tc.token, tc.body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s: expected 403 Forbidden, got %d", tc.name, resp.StatusCode)
+		}
+	}
+
+	// SettleVisitBilling idempotency: second settle on already-paid visit must return 0
+	admisiTok := loginSIMRS(t, ts.URL, "admisi", "admisi123")
+	pResp := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/patients", admisiTok, []byte(`{"full_name":"Idem Test","nik":"3174000000000009"}`))
+	var pat simrsstore.Patient
+	_ = json.NewDecoder(pResp.Body).Decode(&pat)
+	pResp.Body.Close()
+
+	vResp := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/visits", admisiTok, []byte(`{"patient_id":"`+pat.ID+`","service_type":"RJ","unit_name":"Poli Umum","payment_type":"UMUM"}`))
+	var vis simrsstore.Visit
+	_ = json.NewDecoder(vResp.Body).Decode(&vis)
+	vResp.Body.Close()
+
+	s1 := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/visits/"+vis.ID+"/settle", kasirTok, nil)
+	var m1 map[string]any
+	_ = json.NewDecoder(s1.Body).Decode(&m1)
+	s1.Body.Close()
+	if int64(m1["total_paid"].(float64)) <= 0 {
+		t.Fatalf("expected positive first settle, got %+v", m1)
+	}
+
+	s2 := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/visits/"+vis.ID+"/settle", kasirTok, nil)
+	var m2 map[string]any
+	_ = json.NewDecoder(s2.Body).Decode(&m2)
+	s2.Body.Close()
+	if int64(m2["total_paid"].(float64)) != 0 {
+		t.Fatalf("expected 0 on idempotent second settle, got %+v", m2)
+	}
+}

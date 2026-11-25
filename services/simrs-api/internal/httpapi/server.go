@@ -168,8 +168,32 @@ func (s *Server) routes() {
 	clinicalAuth := func(h http.HandlerFunc) http.HandlerFunc {
 		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "DOKTER", "PERAWAT"}, h)
 	}
+	clinicalReadAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "DOKTER", "PERAWAT", "ADMISI", "FARMASI", "KASIR", "DIREKSI"}, h)
+	}
+	pacsViewAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "DOKTER", "PERAWAT", "DIREKSI"}, h)
+	}
 	billingViewAuth := func(h http.HandlerFunc) http.HandlerFunc {
 		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "KASIR", "DIREKSI"}, h)
+	}
+	execAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "DIREKSI"}, h)
+	}
+	hrdAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "HRD", "DIREKSI"}, h)
+	}
+	ipsrsReadAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "IPSRS", "DIREKSI"}, h)
+	}
+	ipsrsWriteAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "IPSRS"}, h)
+	}
+	opsReadAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "OPS", "DIREKSI"}, h)
+	}
+	opsWriteAuth := func(h http.HandlerFunc) http.HandlerFunc {
+		return auth.RequireAuth(s.cfg.JWTSecret, []string{"ADMIN", "OPS"}, h)
 	}
 
 	s.mux.HandleFunc("GET /health", s.handleHealth)
@@ -177,10 +201,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/dashboard", anyAuth(s.handleDashboard))
 	s.mux.HandleFunc("GET /api/v1/clinics", anyAuth(s.handleListClinics))
 
-	s.mux.HandleFunc("GET /api/v1/patients", anyAuth(s.handleListPatients))
+	s.mux.HandleFunc("GET /api/v1/patients", clinicalReadAuth(s.handleListPatients))
 	s.mux.HandleFunc("POST /api/v1/patients", admisiAuth(s.handleCreatePatient))
 
-	s.mux.HandleFunc("GET /api/v1/visits", anyAuth(s.handleListVisits))
+	s.mux.HandleFunc("GET /api/v1/visits", clinicalReadAuth(s.handleListVisits))
 	s.mux.HandleFunc("POST /api/v1/visits", admisiAuth(s.handleCreateVisit))
 	s.mux.HandleFunc("POST /api/v1/visits/{id}/sep", kasirAuth(s.handleGenerateSEP))
 	s.mux.HandleFunc("GET /api/v1/visits/{id}/soap", clinicalAuth(s.handleListSOAP))
@@ -192,31 +216,31 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/beds", anyAuth(s.handleListBeds))
 	s.mux.HandleFunc("POST /api/v1/beds/{id}/release", admisiAuth(s.handleReleaseBed))
 
-	s.mux.HandleFunc("GET /api/v1/radiology-orders", anyAuth(s.handleListRadiologyOrders))
-	s.mux.HandleFunc("GET /api/v1/radiology-orders/{id}/viewer-url", anyAuth(s.handleRadiologyViewerURL))
+	s.mux.HandleFunc("GET /api/v1/radiology-orders", clinicalReadAuth(s.handleListRadiologyOrders))
+	s.mux.HandleFunc("GET /api/v1/radiology-orders/{id}/viewer-url", pacsViewAuth(s.handleRadiologyViewerURL))
 	s.mux.HandleFunc("POST /api/v1/radiology-orders/report", dokterAuth(s.handleAttachRadiologyReport))
 	s.mux.HandleFunc("GET /api/v1/medications", anyAuth(s.handleListMedications))
-	s.mux.HandleFunc("GET /api/v1/prescriptions", anyAuth(s.handleListPrescriptions))
+	s.mux.HandleFunc("GET /api/v1/prescriptions", clinicalReadAuth(s.handleListPrescriptions))
 	s.mux.HandleFunc("POST /api/v1/prescriptions/{id}/dispense", farmasiAuth(s.handleDispensePrescription))
 
 	s.mux.HandleFunc("GET /api/v1/billing", billingViewAuth(s.handleListBilling))
-	s.mux.HandleFunc("GET /api/v1/outbox", anyAuth(s.handleListOutbox))
+	s.mux.HandleFunc("GET /api/v1/outbox", adminOnly(s.handleListOutbox))
 	s.mux.HandleFunc("GET /api/v1/users", adminOnly(s.handleListUsers))
 	s.mux.HandleFunc("POST /api/v1/users", adminOnly(s.handleCreateUser))
 	s.mux.HandleFunc("POST /api/v1/users/{username}/toggle", adminOnly(s.handleToggleUserStatus))
-	s.mux.HandleFunc("GET /api/v1/audit-logs", anyAuth(s.handleListAudits))
+	s.mux.HandleFunc("GET /api/v1/audit-logs", adminOnly(s.handleListAudits))
 	s.mux.HandleFunc("POST /api/v1/satusehat/test-oauth", adminOnly(s.handleTestSatusehatOAuth))
-	s.mux.HandleFunc("GET /api/v1/executive/metrics", anyAuth(s.handleExecutiveMetrics))
-	s.mux.HandleFunc("GET /api/v1/hrd/credentials", anyAuth(s.handleHRDCredentials))
-	s.mux.HandleFunc("GET /api/v1/ipsrs/overview", anyAuth(s.handleIPSRSOverview))
-	s.mux.HandleFunc("POST /api/v1/ipsrs/assets/{id}/calibrate", anyAuth(s.handleCalibrateAsset))
-	s.mux.HandleFunc("POST /api/v1/ipsrs/ipal/{id}/flush", anyAuth(s.handleFlushIPAL))
-	s.mux.HandleFunc("POST /api/v1/ipsrs/work-orders", anyAuth(s.handleCreateIPSRSWorkOrder))
-	s.mux.HandleFunc("POST /api/v1/ipsrs/work-orders/{id}/status", anyAuth(s.handleUpdateIPSRSWorkOrderStatus))
-	s.mux.HandleFunc("GET /api/v1/ops/overview", anyAuth(s.handleOpsOverview))
-	s.mux.HandleFunc("POST /api/v1/ops/nutrition/{id}/advance", anyAuth(s.handleAdvanceNutrition))
-	s.mux.HandleFunc("POST /api/v1/ops/cssd/{id}/advance", anyAuth(s.handleAdvanceCSSD))
-	s.mux.HandleFunc("POST /api/v1/ops/ambulances/{id}/dispatch", anyAuth(s.handleDispatchAmbulance))
+	s.mux.HandleFunc("GET /api/v1/executive/metrics", execAuth(s.handleExecutiveMetrics))
+	s.mux.HandleFunc("GET /api/v1/hrd/credentials", hrdAuth(s.handleHRDCredentials))
+	s.mux.HandleFunc("GET /api/v1/ipsrs/overview", ipsrsReadAuth(s.handleIPSRSOverview))
+	s.mux.HandleFunc("POST /api/v1/ipsrs/assets/{id}/calibrate", ipsrsWriteAuth(s.handleCalibrateAsset))
+	s.mux.HandleFunc("POST /api/v1/ipsrs/ipal/{id}/flush", ipsrsWriteAuth(s.handleFlushIPAL))
+	s.mux.HandleFunc("POST /api/v1/ipsrs/work-orders", ipsrsWriteAuth(s.handleCreateIPSRSWorkOrder))
+	s.mux.HandleFunc("POST /api/v1/ipsrs/work-orders/{id}/status", ipsrsWriteAuth(s.handleUpdateIPSRSWorkOrderStatus))
+	s.mux.HandleFunc("GET /api/v1/ops/overview", opsReadAuth(s.handleOpsOverview))
+	s.mux.HandleFunc("POST /api/v1/ops/nutrition/{id}/advance", opsWriteAuth(s.handleAdvanceNutrition))
+	s.mux.HandleFunc("POST /api/v1/ops/cssd/{id}/advance", opsWriteAuth(s.handleAdvanceCSSD))
+	s.mux.HandleFunc("POST /api/v1/ops/ambulances/{id}/dispatch", opsWriteAuth(s.handleDispatchAmbulance))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -904,7 +928,7 @@ func (s *Server) handleCalibrateAsset(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NextCalibration string `json:"next_calibration"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
 	actor := "ipsrs"
 	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
 		actor = claims.Name
@@ -933,7 +957,7 @@ func (s *Server) handleFlushIPAL(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateIPSRSWorkOrder(w http.ResponseWriter, r *http.Request) {
 	var req simrsstore.WorkOrderIPSRS
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload tidak valid"})
 		return
 	}
@@ -957,7 +981,7 @@ func (s *Server) handleUpdateIPSRSWorkOrderStatus(w http.ResponseWriter, r *http
 	var req struct {
 		Status string `json:"status"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Status) == "" {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || strings.TrimSpace(req.Status) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "status wajib diisi"})
 		return
 	}
@@ -1032,7 +1056,7 @@ func (s *Server) handleDispatchAmbulance(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Mission string `json:"mission"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
 	actor := "operasional"
 	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
 		actor = claims.Name
