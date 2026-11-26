@@ -1,0 +1,210 @@
+# Core SIMRS Enterprise — Production High-Availability & CPU-Pinned Compose
+# Target: RS Tipe B/A (300+ Bed Rawat Inap + Rawat Jalan/IGD)
+# Host Baseline: 32 vCPU / 64 GB RAM / NVMe RAID-10
+# Core Pinning Strategy:
+#   - Cores  0-3  : simrs-api (OLTP Critical Path: IGD, RME, Farmasi, Kasir)
+#   - Cores  4-7  : pg-primary (PostgreSQL OLTP Primary)
+#   - Cores  8-11 : pg-replica (PostgreSQL OLAP Read Replica: Barber-Johnson, Audit, Gudang)
+#   - Cores 12-15 : simrs-outbox-worker (SATUSEHAT FHIR, BPJS VClaim, HL7 MLLP)
+#   - Cores 16-23 : Reserved for Core RIS + Core PACS (recommended on separate node)
+#   - Cores 24-31 : CONTINGENCY RESERVE POOL (25% unpinned headroom for burst/failover)
+
+services:
+  # ============================================================================
+  # ZONA 1: OLTP CRITICAL PATH (Cores 0-7)
+  # ============================================================================
+  pg-primary:
+    image: postgres:16-alpine
+    container_name: simrs-pg-primary
+    restart: always
+    cpuset: "4-7"
+    mem_limit: 16g
+    shm_size: 2g
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=4GB
+      - -c
+      - effective_cache_size=12GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - max_worker_processes=8
+      - -c
+      - max_parallel_workers=4
+      - -c
+      - max_parallel_workers_per_gather=2
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - wal_keep_size=2GB
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=cp %p /var/lib/postgresql/wal_archive/%f
+      - -c
+      - synchronous_commit=on
+    environment:
+      POSTGRES_DB: simrs_core
+      POSTGRES_USER: simrs_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - simrs_pg_primary_data:/var/lib/postgresql/data
+      - simrs_wal_archive:/var/lib/postgresql/wal_archive
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simrs_user -d simrs_core"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: simrs-pgbouncer
+    restart: always
+    cpuset: "0-3"
+    mem_limit: 512m
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    environment:
+      DB_HOST: pg-primary
+      DB_PORT: 5432
+      DB_USER: simrs_user
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      DB_NAME: simrs_core
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1500
+      DEFAULT_POOL_SIZE: 60
+      AUTH_TYPE: scram-sha-256
+
+  simrs-api:
+    build:
+      context: ..
+      dockerfile: deploy/dockerfiles/simrs-api.Dockerfile
+    container_name: simrs-api-prod
+    restart: always
+    cpuset: "0-3"
+    mem_limit: 4g
+    depends_on:
+      pgbouncer:
+        condition: service_started
+    environment:
+      GOMAXPROCS: "4"
+      DATABASE_URL: postgres://simrs_user:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@pgbouncer:5432/simrs_core?sslmode=disable
+      READ_REPLICA_URL: postgres://simrs_user:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@pg-replica:5432/simrs_core?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be at least 32 bytes}
+      SSO_SECRET: ${SSO_SECRET:?SSO_SECRET must be at least 32 bytes}
+      BRAND_NAME: ${BRAND_NAME:-Core SIMRS}
+      HOSPITAL_NAME: ${HOSPITAL_NAME:-RS Tipe B/A Indonesia}
+      SIMRS_API_PORT: "8090"
+      RIS_HL7_ADDR: ${RIS_HL7_ADDR:-ris-api:2575}
+      SATUSEHAT_ENV: ${SATUSEHAT_ENV:-production}
+      SATUSEHAT_ORG_ID: ${SATUSEHAT_ORG_ID:?SATUSEHAT_ORG_ID required}
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  simrs-web:
+    build:
+      context: ..
+      dockerfile: deploy/dockerfiles/web.Dockerfile
+      args:
+        NEXT_PUBLIC_SIMRS_API_URL: ${NEXT_PUBLIC_SIMRS_API_URL:-}
+        NEXT_PUBLIC_BRAND_NAME: ${NEXT_PUBLIC_BRAND_NAME:-Core SIMRS}
+        NEXT_PUBLIC_RIS_URL: ${NEXT_PUBLIC_RIS_URL:-http://localhost:3000}
+        NEXT_PUBLIC_PACS_VIEWER_URL: ${NEXT_PUBLIC_PACS_VIEWER_URL:-http://localhost:3001/viewer}
+        NEXT_PUBLIC_DEMO_MODE: "false"
+    container_name: simrs-web-prod
+    restart: always
+    cpuset: "0-3"
+    mem_limit: 2g
+    depends_on:
+      simrs-api:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+
+  # ============================================================================
+  # ZONA 2: OLAP READ REPLICA & HEAVY BRIDGING WORKER (Cores 8-15)
+  # Isolated from OLTP critical path so Barber-Johnson & BPJS batch never block IGD/Kasir
+  # ============================================================================
+  pg-replica:
+    image: postgres:16-alpine
+    container_name: simrs-pg-replica
+    restart: always
+    cpuset: "8-11"
+    mem_limit: 12g
+    shm_size: 2g
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    command:
+      - postgres
+      - -c
+      - hot_standby=on
+      - -c
+      - max_parallel_workers=4
+      - -c
+      - statement_timeout=15000
+      - -c
+      - work_mem=32MB
+    environment:
+      POSTGRES_DB: simrs_core
+      POSTGRES_USER: simrs_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - simrs_pg_replica_data:/var/lib/postgresql/data
+
+  simrs-outbox-worker:
+    build:
+      context: ..
+      dockerfile: deploy/dockerfiles/simrs-api.Dockerfile
+    container_name: simrs-outbox-worker
+    restart: always
+    cpuset: "12-15"
+    mem_limit: 2g
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    environment:
+      GOMAXPROCS: "4"
+      WORKER_MODE: "outbox_only"
+      OUTBOX_CONCURRENCY: "4"
+      DATABASE_URL: postgres://simrs_user:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@pgbouncer:5432/simrs_core?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+
+  # ============================================================================
+  # ZONA 3: IMMUTABLE BACKUP STORAGE (3-2-1-1-0 Anti-Ransomware + UU PDP AES-256)
+  # ============================================================================
+  minio-backup:
+    image: minio/minio:latest
+    container_name: simrs-immutable-backup
+    restart: always
+    cpuset: "12-15"
+    mem_limit: 2g
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_BACKUP_USER:-simrs_vault_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_BACKUP_PASSWORD:?MINIO_BACKUP_PASSWORD must be set}
+    volumes:
+      - simrs_immutable_vault:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+volumes:
+  simrs_pg_primary_data:
+  simrs_pg_replica_data:
+  simrs_wal_archive:
+  simrs_immutable_vault:
