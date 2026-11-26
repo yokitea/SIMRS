@@ -683,3 +683,19 @@ func (p *PostgresStore) DispatchAmbulance(ctx context.Context, id, mission, acto
 func (p *PostgresStore) ListParkingZones(ctx context.Context) ([]ParkingGateStatus, error) {
 	return pgIPSRSFallback.ListParkingZones(ctx)
 }
+
+func (p *PostgresStore) CreateClinic(ctx context.Context, c ClinicUnit) (ClinicUnit, error) {
+	return pgIPSRSFallback.CreateClinic(ctx, c)
+}
+
+func (p *PostgresStore) ClarifyPrescription(ctx context.Context, rxID, note, actor string) (Prescription, error) {
+	return pgIPSRSFallback.ClarifyPrescription(ctx, rxID, note, actor)
+}
+
+func (p *PostgresStore) ListStockMovements(ctx context.Context) ([]StockMovement, error) {
+	return pgIPSRSFallback.ListStockMovements(ctx)
+}
+
+func (p *PostgresStore) RestockMedication(ctx context.Context, medID string, qty int, refNo, actor, notes string) (Medication, error) {
+	return pgIPSRSFallback.RestockMedication(ctx, medID, qty, refNo, actor, notes)
+}

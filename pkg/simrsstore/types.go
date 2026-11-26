@@ -113,9 +113,31 @@ type Prescription struct {
 	KFACode        string    `json:"kfa_code"`
 	Qty            int       `json:"qty"`
 	Dosage         string    `json:"dosage"`
-	TotalPrice     int64     `json:"total_price"`
-	Status         string    `json:"status"` // MENUNGGU, DISERAHKAN
+	TotalPrice        int64     `json:"total_price"`
+	Status            string    `json:"status"` // MENUNGGU, KLARIFIKASI_DPJP, DISERAHKAN
+	ClarificationNote string    `json:"clarification_note,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type StockMovement struct {
+	ID             string    `json:"id"`
+	MedicationID   string    `json:"medication_id"`
+	KFACode        string    `json:"kfa_code"`
+	MedicationName string    `json:"medication_name"`
+	MovementType   string    `json:"movement_type"` // MASUK | KELUAR
+	Qty            int       `json:"qty"`
+	BalanceAfter   int       `json:"balance_after"`
+	ReferenceNo    string    `json:"reference_no"`
+	Actor          string    `json:"actor"`
+	Notes          string    `json:"notes"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+type RoleDefinition struct {
+	Name         string   `json:"name"`
+	Label        string   `json:"label"`
+	Workstations []string `json:"workstations"`
+	IsCustom     bool     `json:"is_custom"`
 }
 
 type BillingItem struct {
@@ -324,6 +346,7 @@ type Repository interface {
 	DispatchAmbulance(ctx context.Context, id, mission, actor string) (AmbulanceUnit, error)
 	ListParkingZones(ctx context.Context) ([]ParkingGateStatus, error)
 	ListClinics(ctx context.Context) ([]ClinicUnit, error)
+	CreateClinic(ctx context.Context, c ClinicUnit) (ClinicUnit, error)
 	ListPatients(ctx context.Context, query string) ([]Patient, error)
 	GetPatient(ctx context.Context, id string) (Patient, bool, error)
 	CreatePatient(ctx context.Context, p Patient) (Patient, error)
@@ -347,9 +370,12 @@ type Repository interface {
 	AttachRadiologyReport(ctx context.Context, accession, studyUID, reportStatus, radiologist, reportText string) error
 
 	ListMedications(ctx context.Context) ([]Medication, error)
+	ListStockMovements(ctx context.Context) ([]StockMovement, error)
+	RestockMedication(ctx context.Context, medID string, qty int, refNo, actor, notes string) (Medication, error)
 	ListPrescriptions(ctx context.Context, visitID string) ([]Prescription, error)
 	CreatePrescription(ctx context.Context, rx Prescription) (Prescription, error)
 	DispensePrescription(ctx context.Context, rxID string) (Prescription, error)
+	ClarifyPrescription(ctx context.Context, rxID, note, actor string) (Prescription, error)
 
 	ListBillingItems(ctx context.Context, visitID string) ([]BillingItem, error)
 	AddBillingItem(ctx context.Context, item BillingItem) (BillingItem, error)

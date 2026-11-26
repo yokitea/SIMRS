@@ -26,6 +26,7 @@ type MemoryStore struct {
 	outbox           []OutboxItem
 	audits           []AuditLog
 	clinics          []ClinicUnit
+	stockMovements   []StockMovement
 	medicalAssets    []MedicalAsset
 	utilityTelemetry []UtilityTelemetry
 	ipalSensors      []IPALGreaseSensor
@@ -406,6 +407,23 @@ func (m *MemoryStore) seedDefaults() {
 	_ = m.AppendAudit(ctx, "kasir", "ISSUE_SEP", "BPJS", "0001R0011124V000001", "Penerbitan SEP Rawat Jalan & klaim INA-CBG")
 	m.seedIPSRS(now)
 	m.seedOps(now)
+	m.stockMovements = []StockMovement{
+		{
+			ID: uuid.NewString(), MedicationID: "MED-01", KFACode: "92000181", MedicationName: "Azithromycin 500 mg Tablet",
+			MovementType: "MASUK", Qty: 150, BalanceAfter: 150, ReferenceNo: "PO-PBF-2026-001", Actor: "apt. Nadia Putri, S.Farm",
+			Notes: "Penerimaan stok awal dari PBF Kimia Farma", CreatedAt: now.Add(-48 * time.Hour),
+		},
+		{
+			ID: uuid.NewString(), MedicationID: "MED-02", KFACode: "92000312", MedicationName: "Paracetamol 500 mg Tablet",
+			MovementType: "MASUK", Qty: 400, BalanceAfter: 400, ReferenceNo: "PO-PBF-2026-002", Actor: "apt. Nadia Putri, S.Farm",
+			Notes: "Penerimaan batch rutin Gudang Farmasi", CreatedAt: now.Add(-24 * time.Hour),
+		},
+		{
+			ID: uuid.NewString(), MedicationID: "MED-01", KFACode: "92000181", MedicationName: "Azithromycin 500 mg Tablet",
+			MovementType: "KELUAR", Qty: 10, BalanceAfter: 140, ReferenceNo: "RX-20261124-0001", Actor: "apt. Nadia Putri, S.Farm",
+			Notes: "Dispensing Rawat Jalan (Tn. Budi Santoso)", CreatedAt: now.Add(-2 * time.Hour),
+		},
+	}
 	_ = m.AppendAudit(ctx, "kasir", "SETTLE_BILLING", "BILLING", "V-20261124-0001", "Pelunasan tagihan pasien BPJS")
 }
 
@@ -415,6 +433,28 @@ func (m *MemoryStore) ListClinics(_ context.Context) ([]ClinicUnit, error) {
 	out := make([]ClinicUnit, len(m.clinics))
 	copy(out, m.clinics)
 	return out, nil
+}
+
+func (m *MemoryStore) CreateClinic(_ context.Context, c ClinicUnit) (ClinicUnit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if strings.TrimSpace(c.Code) == "" {
+		c.Code = fmt.Sprintf("POLI-%02d", len(m.clinics)+1)
+	} else {
+		c.Code = strings.ToUpper(strings.TrimSpace(c.Code))
+		if !strings.HasPrefix(c.Code, "POLI-") {
+			c.Code = "POLI-" + c.Code
+		}
+	}
+	if strings.TrimSpace(c.OperatingHours) == "" {
+		c.OperatingHours = "08:00 - 15:00 WIB"
+	}
+	if len(c.DoctorList) == 0 && strings.TrimSpace(c.DefaultDoctor) != "" {
+		c.DoctorList = []string{strings.TrimSpace(c.DefaultDoctor)}
+	}
+	m.clinics = append(m.clinics, c)
+	m.appendAuditLocked("admin", "CREATE_CLINIC", "CLINIC", c.Code, "Poliklinik baru ditambahkan: "+c.Name)
+	return c, nil
 }
 
 func DefaultClinics() []ClinicUnit {
@@ -860,6 +900,12 @@ func (m *MemoryStore) DispensePrescription(_ context.Context, rxID string) (Pres
 			return Prescription{}, errors.New("stok obat tidak mencukupi")
 		}
 		med.Stock -= rx.Qty
+		m.stockMovements = append([]StockMovement{{
+			ID: uuid.NewString(), MedicationID: med.ID, KFACode: med.KFACode, MedicationName: med.Name,
+			MovementType: "KELUAR", Qty: rx.Qty, BalanceAfter: med.Stock, ReferenceNo: rx.RxNumber,
+			Actor: "Instalasi Farmasi", Notes: fmt.Sprintf("Dispensing pasien %s (%s)", rx.PatientName, rx.PatientNoRM),
+			CreatedAt: time.Now().UTC(),
+		}}, m.stockMovements...)
 	}
 	rx.Status = "DISERAHKAN"
 	m.billing[rx.VisitID] = append(m.billing[rx.VisitID], &BillingItem{
@@ -868,6 +914,57 @@ func (m *MemoryStore) DispensePrescription(_ context.Context, rxID string) (Pres
 		Qty:         rx.Qty, UnitPrice: rx.TotalPrice / int64(max(rx.Qty, 1)), Subtotal: rx.TotalPrice, CreatedAt: time.Now().UTC(),
 	})
 	return *rx, nil
+}
+
+func (m *MemoryStore) ClarifyPrescription(_ context.Context, rxID, note, actor string) (Prescription, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rx, ok := m.prescriptions[rxID]
+	if !ok {
+		return Prescription{}, errors.New("prescription not found")
+	}
+	rx.Status = "KLARIFIKASI_DPJP"
+	if strings.TrimSpace(note) != "" {
+		rx.ClarificationNote = strings.TrimSpace(note)
+	} else {
+		rx.ClarificationNote = "Mohon tinjau ulang dosis/interaksi obat oleh DPJP"
+	}
+	m.appendAuditLocked(actor, "CLARIFY_RX_DPJP", "FARMASI", rx.RxNumber, fmt.Sprintf("Klarifikasi ke %s (%s): %s", rx.DoctorName, rx.PatientName, rx.ClarificationNote))
+	return *rx, nil
+}
+
+func (m *MemoryStore) ListStockMovements(_ context.Context) ([]StockMovement, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]StockMovement, len(m.stockMovements))
+	copy(out, m.stockMovements)
+	return out, nil
+}
+
+func (m *MemoryStore) RestockMedication(_ context.Context, medID string, qty int, refNo, actor, notes string) (Medication, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	med, ok := m.medications[medID]
+	if !ok {
+		return Medication{}, errors.New("obat tidak ditemukan")
+	}
+	if qty <= 0 {
+		return Medication{}, errors.New("qty restock harus > 0")
+	}
+	med.Stock += qty
+	if strings.TrimSpace(refNo) == "" {
+		refNo = fmt.Sprintf("PO-PBF-%s", time.Now().UTC().Format("20060102-1504"))
+	}
+	if strings.TrimSpace(notes) == "" {
+		notes = "Penerimaan barang masuk Gudang Farmasi"
+	}
+	m.stockMovements = append([]StockMovement{{
+		ID: uuid.NewString(), MedicationID: med.ID, KFACode: med.KFACode, MedicationName: med.Name,
+		MovementType: "MASUK", Qty: qty, BalanceAfter: med.Stock, ReferenceNo: refNo,
+		Actor: actor, Notes: notes, CreatedAt: time.Now().UTC(),
+	}}, m.stockMovements...)
+	m.appendAuditLocked(actor, "RESTOCK_MEDICATION", "GUDANG_OBAT", med.KFACode, fmt.Sprintf("+%d %s (Ref: %s)", qty, med.Name, refNo))
+	return *med, nil
 }
 
 func (m *MemoryStore) ListBillingItems(_ context.Context, visitID string) ([]BillingItem, error) {

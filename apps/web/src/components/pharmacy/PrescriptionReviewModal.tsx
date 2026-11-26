@@ -6,10 +6,11 @@ import { formatIDR, Prescription } from "@/lib/api";
 interface Props {
   rx: Prescription;
   onVerifyAndDispense: (rxId: string) => void;
+  onClarify?: (rxId: string, note: string) => Promise<void> | void;
   onClose: () => void;
 }
 
-export default function PrescriptionReviewModal({ rx, onVerifyAndDispense, onClose }: Props) {
+export default function PrescriptionReviewModal({ rx, onVerifyAndDispense, onClarify, onClose }: Props) {
   // Checklist State
   const [adminChecked, setAdminChecked] = useState({
     patientIdentity: true,
@@ -267,8 +268,10 @@ export default function PrescriptionReviewModal({ rx, onVerifyAndDispense, onClo
             type="button"
             className="btn btn-secondary"
             style={{ color: "#ef4444" }}
-            onClick={() => {
-              alert("Permintaan klarifikasi resep dikirimkan kembali ke DPJP!");
+            onClick={async () => {
+              if (onClarify) {
+                await onClarify(rx.id, reviewNote);
+              }
               onClose();
             }}
           >

@@ -131,6 +131,28 @@ export interface Prescription {
   dosage: string;
   total_price: number;
   status: string;
+  clarification_note?: string;
+}
+
+export interface StockMovement {
+  id: string;
+  medication_id: string;
+  kfa_code: string;
+  medication_name: string;
+  movement_type: "MASUK" | "KELUAR";
+  qty: number;
+  balance_after: number;
+  reference_no: string;
+  actor: string;
+  notes: string;
+  created_at: string;
+}
+
+export interface RoleDefinition {
+  name: string;
+  label: string;
+  workstations: string[];
+  is_custom: boolean;
 }
 
 export interface BillingItem {

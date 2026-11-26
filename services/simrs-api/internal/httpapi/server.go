@@ -47,6 +47,7 @@ type Server struct {
 	loginRL *auth.RateLimiter
 	usersMu sync.RWMutex
 	users   map[string]localUser
+	roles   []simrsstore.RoleDefinition
 	sepSeq  atomic.Int64
 	mux     *http.ServeMux
 }
@@ -108,7 +109,8 @@ func NewServer(cfg Config, repo simrsstore.Repository) *Server {
 			"ipsrs":        {Username: "ipsrs", Role: "IPSRS", FullName: "Ir. Bambang Prasetyo, ST", Hash: ipsrsH, Unit: "Instalasi Pemeliharaan Sarana RS (IPSRS)", NIP: "198604102011011009", Active: true},
 			"operasional":  {Username: "operasional", Role: "OPS", FullName: "Hendra Kusuma, A.Md", Hash: opsH, Unit: "Instalasi Gizi, CSSD & Transportasi RS", NIP: "198911202014031002", Active: true},
 		},
-		mux: http.NewServeMux(),
+		roles: defaultRoles(),
+		mux:   http.NewServeMux(),
 	}
 	s.sepSeq.Store(time.Now().Unix() % 900000)
 	s.routes()
@@ -200,6 +202,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("GET /api/v1/dashboard", anyAuth(s.handleDashboard))
 	s.mux.HandleFunc("GET /api/v1/clinics", anyAuth(s.handleListClinics))
+	s.mux.HandleFunc("POST /api/v1/clinics", admisiAuth(s.handleCreateClinic))
 
 	s.mux.HandleFunc("GET /api/v1/patients", clinicalReadAuth(s.handleListPatients))
 	s.mux.HandleFunc("POST /api/v1/patients", admisiAuth(s.handleCreatePatient))
@@ -220,14 +223,19 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/radiology-orders/{id}/viewer-url", pacsViewAuth(s.handleRadiologyViewerURL))
 	s.mux.HandleFunc("POST /api/v1/radiology-orders/report", dokterAuth(s.handleAttachRadiologyReport))
 	s.mux.HandleFunc("GET /api/v1/medications", anyAuth(s.handleListMedications))
+	s.mux.HandleFunc("GET /api/v1/medications/movements", anyAuth(s.handleListStockMovements))
+	s.mux.HandleFunc("POST /api/v1/medications/{id}/restock", farmasiAuth(s.handleRestockMedication))
 	s.mux.HandleFunc("GET /api/v1/prescriptions", clinicalReadAuth(s.handleListPrescriptions))
 	s.mux.HandleFunc("POST /api/v1/prescriptions/{id}/dispense", farmasiAuth(s.handleDispensePrescription))
+	s.mux.HandleFunc("POST /api/v1/prescriptions/{id}/clarify", farmasiAuth(s.handleClarifyPrescription))
 
 	s.mux.HandleFunc("GET /api/v1/billing", billingViewAuth(s.handleListBilling))
 	s.mux.HandleFunc("GET /api/v1/outbox", adminOnly(s.handleListOutbox))
 	s.mux.HandleFunc("GET /api/v1/users", adminOnly(s.handleListUsers))
 	s.mux.HandleFunc("POST /api/v1/users", adminOnly(s.handleCreateUser))
 	s.mux.HandleFunc("POST /api/v1/users/{username}/toggle", adminOnly(s.handleToggleUserStatus))
+	s.mux.HandleFunc("GET /api/v1/roles", adminOnly(s.handleListRoles))
+	s.mux.HandleFunc("POST /api/v1/roles", adminOnly(s.handleCreateRole))
 	s.mux.HandleFunc("GET /api/v1/audit-logs", adminOnly(s.handleListAudits))
 	s.mux.HandleFunc("POST /api/v1/satusehat/test-oauth", adminOnly(s.handleTestSatusehatOAuth))
 	s.mux.HandleFunc("GET /api/v1/executive/metrics", execAuth(s.handleExecutiveMetrics))
@@ -276,7 +284,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "akun pengguna dinonaktifkan (suspended)"})
 		return
 	}
-	allowedWs := allowedWorkstationsForRole(u.Role)
+	allowedWs := s.allowedWorkstationsForUserRole(u.Role)
 	tok, err := auth.SignJWT(s.cfg.JWTSecret, auth.Claims{
 		Sub:          req.Username,
 		Role:         u.Role,
@@ -1067,6 +1075,147 @@ func (s *Server) handleDispatchAmbulance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ambulance": updated})
+}
+
+func defaultRoles() []simrsstore.RoleDefinition {
+	return []simrsstore.RoleDefinition{
+		{Name: "DOKTER", Label: "DOKTER (Klinis, RME/SOAP & Penunjang)", Workstations: []string{"CLINIC", "RANAP"}, IsCustom: false},
+		{Name: "PERAWAT", Label: "PERAWAT (Asuhan Bangsal & Rawat Inap)", Workstations: []string{"RANAP"}, IsCustom: false},
+		{Name: "FARMASI", Label: "FARMASI (Telaah Resep & Gudang Obat)", Workstations: []string{"PHARMACY"}, IsCustom: false},
+		{Name: "KASIR", Label: "KASIR (Billing POS, QRIS & SEP BPJS)", Workstations: []string{"BILLING"}, IsCustom: false},
+		{Name: "ADMISI", Label: "ADMISI (EMPI, Pendaftaran & Antrean)", Workstations: []string{"ADMISSION"}, IsCustom: false},
+		{Name: "DIREKSI", Label: "DIREKSI (Executive Command Center)", Workstations: []string{"EXECUTIVE", "RANAP", "IPSRS", "OPS"}, IsCustom: false},
+		{Name: "HRD", Label: "HRD (SDM, STR/SIP & Kredensial)", Workstations: []string{"HRD"}, IsCustom: false},
+		{Name: "IPSRS", Label: "IPSRS (Kalibrasi Alkes, Utility & IPAL)", Workstations: []string{"IPSRS"}, IsCustom: false},
+		{Name: "OPS", Label: "OPS (Dapur Gizi, CSSD, Ambulans & Parkir)", Workstations: []string{"OPS"}, IsCustom: false},
+		{Name: "ADMIN", Label: "ADMIN (Superuser IT & IAM)", Workstations: []string{"CLINIC", "PHARMACY", "BILLING", "ADMISSION", "RANAP", "EXECUTIVE", "HRD", "IPSRS", "OPS", "ADMIN"}, IsCustom: false},
+	}
+}
+
+func (s *Server) allowedWorkstationsForUserRole(role string) []string {
+	r := strings.ToUpper(strings.TrimSpace(role))
+	s.usersMu.RLock()
+	for _, rl := range s.roles {
+		if rl.Name == r && len(rl.Workstations) > 0 {
+			cp := make([]string, len(rl.Workstations))
+			copy(cp, rl.Workstations)
+			s.usersMu.RUnlock()
+			return cp
+		}
+	}
+	s.usersMu.RUnlock()
+	return allowedWorkstationsForRole(r)
+}
+
+func (s *Server) handleCreateClinic(w http.ResponseWriter, r *http.Request) {
+	var c simrsstore.ClinicUnit
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&c); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload poliklinik tidak valid"})
+		return
+	}
+	if strings.TrimSpace(c.Name) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "nama poliklinik wajib diisi"})
+		return
+	}
+	created, err := s.repo.CreateClinic(r.Context(), c)
+	if err != nil {
+		writeInternalErr(w, "create clinic", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"clinic": created})
+}
+
+func (s *Server) handleListRoles(w http.ResponseWriter, _ *http.Request) {
+	s.usersMu.RLock()
+	defer s.usersMu.RUnlock()
+	out := make([]simrsstore.RoleDefinition, len(s.roles))
+	copy(out, s.roles)
+	writeJSON(w, http.StatusOK, map[string]any{"roles": out})
+}
+
+func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
+	var req simrsstore.RoleDefinition
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload peran tidak valid"})
+		return
+	}
+	name := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(req.Name), " ", "_"))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kode peran wajib diisi"})
+		return
+	}
+	if len(req.Workstations) == 0 {
+		req.Workstations = []string{"CLINIC"}
+	}
+	label := strings.TrimSpace(req.Label)
+	if label == "" {
+		label = name
+	}
+	roleDef := simrsstore.RoleDefinition{
+		Name: name, Label: label, Workstations: req.Workstations, IsCustom: true,
+	}
+	s.usersMu.Lock()
+	for _, existing := range s.roles {
+		if existing.Name == name {
+			s.usersMu.Unlock()
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "peran sudah terdaftar"})
+			return
+		}
+	}
+	s.roles = append(s.roles, roleDef)
+	s.usersMu.Unlock()
+	_ = s.repo.AppendAudit(r.Context(), "admin", "CREATE_ROLE", "IAM_ROLE", name, "Peran baru ditambahkan: "+label)
+	writeJSON(w, http.StatusCreated, map[string]any{"role": roleDef})
+}
+
+func (s *Server) handleClarifyPrescription(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Note string `json:"note"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	actor := "farmasi"
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
+		actor = claims.Name
+	}
+	rx, err := s.repo.ClarifyPrescription(r.Context(), id, req.Note, actor)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"prescription": rx})
+}
+
+func (s *Server) handleListStockMovements(w http.ResponseWriter, r *http.Request) {
+	moves, err := s.repo.ListStockMovements(r.Context())
+	if err != nil {
+		writeInternalErr(w, "list stock movements", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"movements": moves})
+}
+
+func (s *Server) handleRestockMedication(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Qty   int    `json:"qty"`
+		RefNo string `json:"ref_no"`
+		Notes string `json:"notes"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || req.Qty <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "qty restock wajib > 0"})
+		return
+	}
+	actor := "farmasi"
+	if claims, ok := auth.ClaimsFromContext(r.Context()); ok && claims.Name != "" {
+		actor = claims.Name
+	}
+	med, err := s.repo.RestockMedication(r.Context(), id, req.Qty, req.RefNo, actor, req.Notes)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"medication": med})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

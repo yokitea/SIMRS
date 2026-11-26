@@ -26,6 +26,8 @@ import {
   StaffCredential,
   IPSRSOverview,
   OpsOverview,
+  StockMovement,
+  RoleDefinition,
   WorkstationType,
   WORKSTATIONS,
   getAllowedWorkstations,
@@ -72,6 +74,12 @@ export default function SIMRSConsolePage() {
   const [staffCredentials, setStaffCredentials] = useState<StaffCredential[]>([]);
   const [ipsrsData, setIpsrsData] = useState<IPSRSOverview | null>(null);
   const [opsData, setOpsData] = useState<OpsOverview | null>(null);
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [rolesList, setRolesList] = useState<RoleDefinition[]>([]);
+  const [showNewClinic, setShowNewClinic] = useState(false);
+  const [newClinicForm, setNewClinicForm] = useState({ name: "", code: "", specialty: "", room_number: "", default_doctor: "", bpjs_poli_code: "" });
+  const [newRoleForm, setNewRoleForm] = useState({ name: "", label: "", workstations: ["CLINIC"] as string[] });
+  const [restockForm, setRestockForm] = useState({ medication_id: "MED-01", qty: 50, ref_no: "", notes: "" });
   const [loginUser, setLoginUser] = useState("admin");
   const [loginPass, setLoginPass] = useState("admin123");
   const [loginErr, setLoginErr] = useState("");
@@ -172,7 +180,7 @@ export default function SIMRSConsolePage() {
     const canOps = ["ADMIN", "OPS", "DIREKSI"].includes(role);
 
     try {
-      const [dRes, pRes, vRes, bRes, mRes, rxRes, rRes, bilRes, oRes, uRes, aRes, cRes, execRes, hrdRes, ipsrsRes, opsRes] = await Promise.all([
+      const [dRes, pRes, vRes, bRes, mRes, rxRes, rRes, bilRes, oRes, uRes, aRes, cRes, execRes, hrdRes, ipsrsRes, opsRes, movRes, roleRes] = await Promise.all([
         fetch(`${SIMRS_API_URL}/api/v1/dashboard`, h),
         canClinical ? fetch(`${SIMRS_API_URL}/api/v1/patients`, h) : Promise.resolve(null),
         canClinical ? fetch(`${SIMRS_API_URL}/api/v1/visits`, h) : Promise.resolve(null),
@@ -189,6 +197,8 @@ export default function SIMRSConsolePage() {
         canHRD ? fetch(`${SIMRS_API_URL}/api/v1/hrd/credentials`, h) : Promise.resolve(null),
         canIPSRS ? fetch(`${SIMRS_API_URL}/api/v1/ipsrs/overview`, h) : Promise.resolve(null),
         canOps ? fetch(`${SIMRS_API_URL}/api/v1/ops/overview`, h) : Promise.resolve(null),
+        fetch(`${SIMRS_API_URL}/api/v1/medications/movements`, h),
+        isAdmin ? fetch(`${SIMRS_API_URL}/api/v1/roles`, h) : Promise.resolve(null),
       ]);
       if (dRes.status === 401) {
         localStorage.removeItem("simrs_jwt");
@@ -233,6 +243,12 @@ export default function SIMRSConsolePage() {
       }
       if (opsRes && opsRes.ok) {
         setOpsData(await opsRes.json());
+      }
+      if (movRes && movRes.ok) {
+        setStockMovements((await movRes.json()).movements || []);
+      }
+      if (roleRes && roleRes.ok) {
+        setRolesList((await roleRes.json()).roles || []);
       }
     } catch {
       notify("Gagal menghubungi SIMRS API (" + SIMRS_API_URL + ")");
@@ -597,8 +613,78 @@ export default function SIMRSConsolePage() {
   const handleDispense = async (rxId: string) => {
     const res = await fetch(`${SIMRS_API_URL}/api/v1/prescriptions/${rxId}/dispense`, { method: "POST", headers: authHeaders() });
     if (res.ok) {
-      notify("Obat diserahkan, stok dipotong & tagihan ditambahkan ke Kasir");
+      notify("Obat diserahkan, stok dipotong & tercatat di Kartu Stok Gudang");
       await loadAll();
+    }
+  };
+
+  const handleClarifyRx = async (rxId: string, note: string) => {
+    const res = await fetch(`${SIMRS_API_URL}/api/v1/prescriptions/${rxId}/clarify`, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ note }),
+    });
+    if (res.ok) {
+      notify("⚠️ Permintaan klarifikasi dikirim ke Workstation Dokter (DPJP)!");
+      await loadAll();
+    }
+  };
+
+  const handleRestockMed = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = await fetch(`${SIMRS_API_URL}/api/v1/medications/${restockForm.medication_id}/restock`, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        qty: Number(restockForm.qty),
+        ref_no: restockForm.ref_no,
+        notes: restockForm.notes,
+      }),
+    });
+    if (res.ok) {
+      notify("✅ Stok masuk Gudang Farmasi berhasil dicatat!");
+      setRestockForm((prev) => ({ ...prev, ref_no: "", notes: "" }));
+      await loadAll();
+    } else {
+      const err = await res.json();
+      notify(err.error || "Gagal restock obat");
+    }
+  };
+
+  const handleCreateClinic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClinicForm.name.trim()) return;
+    const res = await fetch(`${SIMRS_API_URL}/api/v1/clinics`, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(newClinicForm),
+    });
+    if (res.ok) {
+      notify(`✅ Poliklinik "${newClinicForm.name}" berhasil ditambahkan!`);
+      setNewClinicForm({ name: "", code: "", specialty: "", room_number: "", default_doctor: "", bpjs_poli_code: "" });
+      setShowNewClinic(false);
+      await loadAll();
+    } else {
+      const err = await res.json();
+      notify(err.error || "Gagal menambah poliklinik");
+    }
+  };
+
+  const handleCreateRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRoleForm.name.trim()) return;
+    const res = await fetch(`${SIMRS_API_URL}/api/v1/roles`, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(newRoleForm),
+    });
+    if (res.ok) {
+      notify(`✅ Peran "${newRoleForm.name.toUpperCase()}" berhasil dibuat & siap dipakai!`);
+      setNewRoleForm({ name: "", label: "", workstations: ["CLINIC"] });
+      await loadAll();
+    } else {
+      const err = await res.json();
+      notify(err.error || "Gagal menambah peran");
     }
   };
 
@@ -1084,7 +1170,12 @@ export default function SIMRSConsolePage() {
                   <input className="input" placeholder="Nama Ibu Kandung *" value={newPat.mother_name} onChange={(e) => setNewPat({ ...newPat, mother_name: e.target.value })} />
                   <input className="input" placeholder="No. HP" value={newPat.phone} onChange={(e) => setNewPat({ ...newPat, phone: e.target.value })} />
                   <input className="input" placeholder="No. Kartu BPJS" value={newPat.bpjs_number} onChange={(e) => setNewPat({ ...newPat, bpjs_number: e.target.value })} />
-                  <input className="input" type="date" value={newPat.birth_date} onChange={(e) => setNewPat({ ...newPat, birth_date: e.target.value })} />
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>
+                      Tanggal Lahir Pasien (EMPI &amp; Umur) *
+                    </label>
+                    <input className="input" style={{ width: "100%" }} type="date" value={newPat.birth_date} onChange={(e) => setNewPat({ ...newPat, birth_date: e.target.value })} />
+                  </div>
                   <select className="select" value={newPat.sex} onChange={(e) => setNewPat({ ...newPat, sex: e.target.value })}>
                     <option value="M">Laki-laki</option>
                     <option value="F">Perempuan</option>
@@ -1242,6 +1333,14 @@ export default function SIMRSConsolePage() {
                 </span>
                 <button
                   type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: "3px 8px", fontSize: 11, borderColor: "rgba(16,185,129,0.4)", color: "#34d399" }}
+                  onClick={() => setShowNewClinic((s) => !s)}
+                >
+                  {showNewClinic ? "✕ Tutup Form Poli" : "+ Tambah Poli Baru"}
+                </button>
+                <button
+                  type="button"
                   className={`btn ${poliFilter === "ALL" ? "btn-primary" : "btn-secondary"}`}
                   style={{ padding: "3px 8px", fontSize: 11 }}
                   onClick={() => setPoliFilter("ALL")}
@@ -1275,6 +1374,17 @@ export default function SIMRSConsolePage() {
                   );
                 })}
               </div>
+
+              {showNewClinic && (
+                <form onSubmit={handleCreateClinic} style={{ marginBottom: 14, padding: 12, background: "#0d121c", border: "1px solid rgba(16,185,129,0.35)", borderRadius: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
+                  <input className="input" placeholder="Nama Poli * (mis: Poli Kulit)" value={newClinicForm.name} onChange={(e) => setNewClinicForm({ ...newClinicForm, name: e.target.value })} required />
+                  <input className="input" placeholder="Kode (mis: KULIT)" value={newClinicForm.code} onChange={(e) => setNewClinicForm({ ...newClinicForm, code: e.target.value })} />
+                  <input className="input" placeholder="Spesialisasi (mis: Sp.KK)" value={newClinicForm.specialty} onChange={(e) => setNewClinicForm({ ...newClinicForm, specialty: e.target.value })} />
+                  <input className="input" placeholder="Ruangan (mis: R.215)" value={newClinicForm.room_number} onChange={(e) => setNewClinicForm({ ...newClinicForm, room_number: e.target.value })} />
+                  <input className="input" placeholder="DPJP Default (mis: dr. Rini, Sp.KK)" value={newClinicForm.default_doctor} onChange={(e) => setNewClinicForm({ ...newClinicForm, default_doctor: e.target.value })} />
+                  <button className="btn btn-primary" type="submit">✓ Simpan Poli</button>
+                </form>
+              )}
 
               <div className="table-wrap">
                 <table>
@@ -1471,6 +1581,35 @@ export default function SIMRSConsolePage() {
         {/* TAB 2: RME / DOKTER */}
         {tab === "rme" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Real-time Farmasi -> DPJP Clarification Notification Banner */}
+            {prescriptions.filter((rx) => rx.status === "KLARIFIKASI_DPJP").length > 0 && (
+              <section className="card" style={{ border: "1px solid rgba(244,63,94,0.55)", background: "rgba(244,63,94,0.08)" }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, color: "#fda4af", marginBottom: 6 }}>
+                  ⚠️ Notifikasi Klarifikasi Resep dari Instalasi Farmasi ({prescriptions.filter((rx) => rx.status === "KLARIFIKASI_DPJP").length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {prescriptions
+                    .filter((rx) => rx.status === "KLARIFIKASI_DPJP")
+                    .map((rx) => (
+                      <div key={rx.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "6px 10px", background: "rgba(15,23,42,0.7)", borderRadius: 6, fontSize: 12 }}>
+                        <div>
+                          <strong>{rx.patient_name}</strong> ({rx.patient_no_rm}) — <span style={{ color: "#fbbf24" }}>{rx.medication_name} x{rx.qty}</span>
+                          <div style={{ fontSize: 11, color: "#fecdd3" }}>Catatan Apoteker: {rx.clarification_note || "Mohon tinjau ulang resep"}</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{ fontSize: 11, padding: "4px 10px", flexShrink: 0 }}
+                          onClick={() => setActiveVisitId(rx.visit_id)}
+                        >
+                          Buka Pasien →
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              </section>
+            )}
+
             <section className="card" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <strong>Filter Poli:</strong>
@@ -1950,6 +2089,60 @@ export default function SIMRSConsolePage() {
                 </div>
               </section>
             </div>
+
+            {/* Laporan Histori Keluar Masuk Obat (Kartu Stok Gudang Farmasi) */}
+            <section className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 15 }}>📦 Laporan Data Gudang &amp; Kartu Stok Obat (Masuk / Keluar)</h3>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>Pencatatan real-time penerimaan PBF (MASUK) dan pengeluaran dispensing resep pasien (KELUAR).</div>
+                </div>
+                <form onSubmit={handleRestockMed} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  <select className="select" style={{ maxWidth: 200, fontSize: 12 }} value={restockForm.medication_id} onChange={(e) => setRestockForm({ ...restockForm, medication_id: e.target.value })}>
+                    {medications.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                  <input className="input" type="number" min={1} style={{ width: 75, fontSize: 12 }} value={restockForm.qty} onChange={(e) => setRestockForm({ ...restockForm, qty: Number(e.target.value) })} placeholder="Qty" />
+                  <input className="input" style={{ width: 140, fontSize: 12 }} value={restockForm.ref_no} onChange={(e) => setRestockForm({ ...restockForm, ref_no: e.target.value })} placeholder="No. PO / Faktur PBF" />
+                  <button className="btn btn-primary" type="submit" style={{ fontSize: 12 }}>+ Terima Stok Masuk</button>
+                </form>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Waktu</th>
+                      <th>Tipe</th>
+                      <th>Obat (KFA)</th>
+                      <th>Qty</th>
+                      <th>Saldo Akhir</th>
+                      <th>No. Referensi</th>
+                      <th>Keterangan &amp; Petugas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stockMovements.map((mv) => (
+                      <tr key={mv.id}>
+                        <td className="mono" style={{ fontSize: 11 }}>{new Date(mv.created_at).toLocaleString("id-ID")}</td>
+                        <td>
+                          <span className={`badge ${mv.movement_type === "MASUK" ? "badge-green" : "badge-amber"}`} style={{ fontSize: 10 }}>
+                            {mv.movement_type === "MASUK" ? "⬇️ MASUK" : "⬆️ KELUAR"}
+                          </span>
+                        </td>
+                        <td><strong>{mv.medication_name}</strong><div className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>{mv.kfa_code}</div></td>
+                        <td className="mono" style={{ fontWeight: 700, color: mv.movement_type === "MASUK" ? "#34d399" : "#fbbf24" }}>
+                          {mv.movement_type === "MASUK" ? `+${mv.qty}` : `-${mv.qty}`}
+                        </td>
+                        <td className="mono"><strong>{mv.balance_after}</strong></td>
+                        <td className="mono" style={{ fontSize: 11 }}>{mv.reference_no}</td>
+                        <td style={{ fontSize: 11.5 }}>{mv.notes} <span style={{ color: "var(--muted)" }}>({mv.actor})</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
         )}
 
@@ -2339,15 +2532,32 @@ export default function SIMRSConsolePage() {
               </section>
             )}
 
-            {/* SUBTAB 2: ROLE PERMISSION MATRIX */}
+            {/* SUBTAB 2: ROLE PERMISSION MATRIX + TAMBAH PERAN BARU */}
             {adminSubTab === "matrix" && (
               <section className="card">
-                <div style={{ marginBottom: 16 }}>
-                  <h3 style={{ margin: 0, fontSize: 16 }}>Matriks Hak Akses & Kewenangan Peran (RBAC Matrix)</h3>
+                <div style={{ marginBottom: 14 }}>
+                  <h3 style={{ margin: 0, fontSize: 16 }}>Matriks Hak Akses &amp; Manajemen Peran (RBAC Matrix)</h3>
                   <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--muted)" }}>
-                    Pemisahan tugas (*Separation of Duties*) dan prinsip *Need-to-Know Basis* yang ter-enforce otomatis di backend API.
+                    Tambahkan peran khusus RS (misal: CASEMIX, LAB, REKAM_MEDIS) dan tentukan workstation yang diizinkan.
                   </p>
                 </div>
+
+                <form onSubmit={handleCreateRole} style={{ marginBottom: 16, padding: 12, background: "#0d121c", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                  <input className="input" style={{ width: 150 }} placeholder="Kode Peran (mis: CASEMIX)" value={newRoleForm.name} onChange={(e) => setNewRoleForm({ ...newRoleForm, name: e.target.value })} required />
+                  <input className="input" style={{ flex: 1, minWidth: 200 }} placeholder="Deskripsi Peran (mis: Tim Casemix & Klaim INA-CBG)" value={newRoleForm.label} onChange={(e) => setNewRoleForm({ ...newRoleForm, label: e.target.value })} />
+                  <select className="select" style={{ width: 190 }} value={newRoleForm.workstations[0] || "CLINIC"} onChange={(e) => setNewRoleForm({ ...newRoleForm, workstations: [e.target.value] })}>
+                    <option value="CLINIC">Workstation: Poliklinik / RME</option>
+                    <option value="PHARMACY">Workstation: Farmasi</option>
+                    <option value="BILLING">Workstation: Kasir / Klaim</option>
+                    <option value="ADMISSION">Workstation: Admisi / EMPI</option>
+                    <option value="RANAP">Workstation: Rawat Inap</option>
+                    <option value="EXECUTIVE">Workstation: Direksi</option>
+                    <option value="HRD">Workstation: SDM / HRD</option>
+                    <option value="IPSRS">Workstation: IPSRS / IPAL</option>
+                    <option value="OPS">Workstation: Gizi / CSSD / Ops</option>
+                  </select>
+                  <button className="btn btn-primary" type="submit">+ Tambah Peran Baru</button>
+                </form>
 
                 <div className="table-wrap">
                   <table>
@@ -2628,12 +2838,26 @@ export default function SIMRSConsolePage() {
                           className="input"
                           style={{ width: "100%" }}
                         >
-                          <option value="DOKTER">DOKTER (Klinis & SOAP)</option>
-                          <option value="PERAWAT">PERAWAT (Asuhan & Rawat)</option>
-                          <option value="FARMASI">FARMASI (Resep & Obat)</option>
-                          <option value="KASIR">KASIR (Billing & BPJS)</option>
-                          <option value="ADMISI">ADMISI (Pendaftaran)</option>
-                          <option value="ADMIN">ADMIN (Superuser IT)</option>
+                          {rolesList.length > 0 ? (
+                            rolesList.map((r) => (
+                              <option key={r.name} value={r.name}>
+                                {r.label} {r.is_custom ? "(Custom)" : ""}
+                              </option>
+                            ))
+                          ) : (
+                            <>
+                              <option value="DOKTER">DOKTER (Klinis &amp; SOAP)</option>
+                              <option value="PERAWAT">PERAWAT (Asuhan &amp; Rawat)</option>
+                              <option value="FARMASI">FARMASI (Resep &amp; Obat)</option>
+                              <option value="KASIR">KASIR (Billing &amp; BPJS)</option>
+                              <option value="ADMISI">ADMISI (Pendaftaran)</option>
+                              <option value="DIREKSI">DIREKSI (Executive Command)</option>
+                              <option value="HRD">HRD (SDM &amp; Kredensial)</option>
+                              <option value="IPSRS">IPSRS (Alkes &amp; IPAL)</option>
+                              <option value="OPS">OPS (Gizi, CSSD &amp; Ambulans)</option>
+                              <option value="ADMIN">ADMIN (Superuser IT)</option>
+                            </>
+                          )}
                         </select>
                       </div>
                       <div>
@@ -2842,6 +3066,7 @@ export default function SIMRSConsolePage() {
               await handleDispense(rxId);
               setReviewingRx(null);
             }}
+            onClarify={handleClarifyRx}
             onClose={() => setReviewingRx(null)}
           />
         )}

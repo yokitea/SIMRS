@@ -386,3 +386,67 @@ func TestNegativeRBACAndIdempotency(t *testing.T) {
 		t.Fatalf("expected 0 on idempotent second settle, got %+v", m2)
 	}
 }
+
+func TestFeedbackWorkflows(t *testing.T) {
+	repo := simrsstore.NewMemoryStore()
+	srv := NewServer(Config{BrandName: "Core SIMRS", HospitalName: "RS Demo", JWTSecret: "test_simrs_secret_at_least_32_bytes_ok"}, repo)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	adminTok := loginSIMRS(t, ts.URL, "admin", "admin123")
+	farmasiTok := loginSIMRS(t, ts.URL, "farmasi", "farmasi123")
+
+	// 1. Tambah Poli Baru
+	cResp := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/clinics", adminTok, []byte(`{"name":"Poli Kulit & Kelamin","code":"KULIT","specialty":"Sp.KK","room_number":"R.215","default_doctor":"dr. Rini, Sp.KK"}`))
+	if cResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create clinic failed: %d", cResp.StatusCode)
+	}
+	cResp.Body.Close()
+
+	// 2. Tambah Peran Baru (Custom Role)
+	rResp := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/roles", adminTok, []byte(`{"name":"CASEMIX","label":"Tim Casemix & INA-CBG","workstations":["BILLING"]}`))
+	if rResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create role failed: %d", rResp.StatusCode)
+	}
+	rResp.Body.Close()
+
+	// 3. Restock Obat + Cek Kartu Stok Gudang
+	stResp := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/medications/MED-01/restock", farmasiTok, []byte(`{"qty":25,"ref_no":"PO-TEST-01"}`))
+	if stResp.StatusCode != http.StatusOK {
+		t.Fatalf("restock failed: %d", stResp.StatusCode)
+	}
+	stResp.Body.Close()
+
+	mResp := doAuthJSON(t, http.MethodGet, ts.URL+"/api/v1/medications/movements", farmasiTok, nil)
+	var movs struct {
+		Movements []simrsstore.StockMovement `json:"movements"`
+	}
+	_ = json.NewDecoder(mResp.Body).Decode(&movs)
+	mResp.Body.Close()
+	if len(movs.Movements) == 0 || movs.Movements[0].ReferenceNo != "PO-TEST-01" {
+		t.Fatalf("expected PO-TEST-01 in movements, got %+v", movs.Movements)
+	}
+
+	// 4. Klarifikasi Resep Farmasi -> DPJP
+	rxListResp := doAuthJSON(t, http.MethodGet, ts.URL+"/api/v1/prescriptions", farmasiTok, nil)
+	var rxs struct {
+		Prescriptions []simrsstore.Prescription `json:"prescriptions"`
+	}
+	_ = json.NewDecoder(rxListResp.Body).Decode(&rxs)
+	rxListResp.Body.Close()
+	if len(rxs.Prescriptions) == 0 {
+		t.Fatalf("expected seeded prescriptions")
+	}
+	clResp := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/prescriptions/"+rxs.Prescriptions[0].ID+"/clarify", farmasiTok, []byte(`{"note":"Cek dosis ulang"}`))
+	if clResp.StatusCode != http.StatusOK {
+		t.Fatalf("clarify rx failed: %d", clResp.StatusCode)
+	}
+	var clOut struct {
+		Prescription simrsstore.Prescription `json:"prescription"`
+	}
+	_ = json.NewDecoder(clResp.Body).Decode(&clOut)
+	clResp.Body.Close()
+	if clOut.Prescription.Status != "KLARIFIKASI_DPJP" {
+		t.Fatalf("expected KLARIFIKASI_DPJP, got %s", clOut.Prescription.Status)
+	}
+}
